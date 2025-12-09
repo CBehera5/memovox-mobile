@@ -1,0 +1,50 @@
+{
+  "expo": {
+    "name": "Memovox",
+    "slug": "memovox",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "bundleIdentifier": "com.memovox.app",
+      "supportsTabletMode": true,
+      "usesNonExemptEncryption": false,
+      "minimumOSVersion": "17.0"
+    },
+    "android": {
+      "usesPermission": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.INTERNET"
+      ],
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#667EEA"
+      },
+      "package": "com.memovox.app"
+    },
+    "web": {},
+    "scheme": "memovox",
+    "plugins": [
+      "expo-router",
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "ce1f9f7a-de8f-42e5-85b5-347a9f0ae981"
+      }
+    },
+    "owner": "chinuchinu8"
+  }
+}
