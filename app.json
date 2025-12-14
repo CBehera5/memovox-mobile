@@ -27,8 +27,11 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#667EEA"
       },
-      "package": "com.memovox.app"
+      "package": "com.memovox.app",
+      "enableProguard": true,
+      "enableShrinkResources": true
     },
+    "jsEngine": "hermes",
     "web": {},
     "scheme": "memovox",
     "plugins": [
