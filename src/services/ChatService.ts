@@ -1,6 +1,5 @@
 // src/services/ChatService.ts
 
-import { Groq } from 'groq-sdk';
 import { Platform } from 'react-native';
 import StorageService from './StorageService';
 import AIService from './AIService';
@@ -34,27 +33,14 @@ export interface ChatSession {
 }
 
 class ChatService {
-  private groqClient: Groq | null = null;
   private currentSession: ChatSession | null = null;
   private apiKey: string = '***REMOVED***';
+  private apiEndpoint: string = 'https://api.groq.com/openai/v1/chat/completions';
 
   constructor() {
-    this.initializeGroq();
-  }
-
-  private initializeGroq(): void {
-    if (this.apiKey) {
-      try {
-        this.groqClient = new Groq({
-          apiKey: this.apiKey,
-          dangerouslyAllowBrowser: true,
-        });
-        console.log('Chat service Groq client initialized');
-      } catch (error) {
-        console.error('Error initializing chat Groq client:', error);
-        this.groqClient = null;
-      }
-    }
+    console.log('=== ChatService Initialized ===');
+    console.log('API Key present:', !!this.apiKey);
+    console.log('Using fetch-based implementation for React Native compatibility');
   }
 
   /**
@@ -102,12 +88,18 @@ class ChatService {
     userMessage: string,
     userAudioUri?: string
   ): Promise<{ userMessage: ChatMessage; aiResponse: ChatMessage }> {
+    console.log('=== SendMessage Called ===');
+    console.log('Current session exists:', !!this.currentSession);
+    console.log('API key exists:', !!this.apiKey);
+    
     if (!this.currentSession) {
+      console.error('❌ No active chat session');
       throw new Error('No active chat session');
     }
 
-    if (!this.groqClient) {
-      throw new Error('Groq client not initialized');
+    if (!this.apiKey) {
+      console.error('❌ API key is missing');
+      throw new Error('AI service not available. Please check your connection.');
     }
 
     try {
@@ -132,18 +124,32 @@ class ChatService {
         content: userMessage,
       });
 
-      console.log('Sending message to Groq API:', userMessage);
+      console.log('Sending message to Groq API:', userMessage.substring(0, 50) + '...');
 
-      // Get AI response
-      const response = await this.groqClient.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
-        max_tokens: 1024,
-        temperature: 0.7,
-        messages: conversationHistory as any,
+      // Make direct fetch call to Groq API
+      const response = await fetch(this.apiEndpoint, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          max_tokens: 1024,
+          temperature: 0.7,
+          messages: conversationHistory,
+        }),
       });
 
-      const aiContent = response.choices[0].message.content || '';
-      console.log('AI Response:', aiContent);
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error('API Error:', response.status, errorData);
+        throw new Error(`API request failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const aiContent = data.choices[0].message.content || 'I apologize, I could not generate a response.';
+      console.log('AI Response received successfully');
 
       // Create AI message
       const aiMsg: ChatMessage = {
@@ -165,9 +171,10 @@ class ChatService {
         userMessage: userMsg,
         aiResponse: aiMsg,
       };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error sending message:', error);
-      throw error;
+      console.error('Error details:', error.message || error);
+      throw new Error(error.message || 'Failed to get AI response. Please check your internet connection.');
     }
   }
 

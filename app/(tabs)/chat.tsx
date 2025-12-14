@@ -14,7 +14,7 @@ import {
   Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useFocusEffect } from 'expo-router';
 import ChatService, { ChatMessage, ChatSession } from '../../src/services/ChatService';
 import AudioService from '../../src/services/AudioService';
 import StorageService from '../../src/services/StorageService';
@@ -22,8 +22,9 @@ import VoiceMemoService from '../../src/services/VoiceMemoService';
 import PersonalCompanionService from '../../src/services/PersonalCompanionService';
 import ActionService from '../../src/services/ActionService';
 import AgentActionManager from '../../src/services/AgentActionManager';
+import AgentService from '../../src/services/AgentService';
 import AnimatedActionButton from '../../src/components/AnimatedActionButton';
-import { User, VoiceMemo } from '../../src/types';
+import { User, VoiceMemo, AgentSuggestion } from '../../src/types';
 
 const ChatScreen: React.FC = () => {
   const params = useLocalSearchParams<{
@@ -44,24 +45,29 @@ const ChatScreen: React.FC = () => {
   const [showingInsight, setShowingInsight] = useState(false);
   const [memoLoaded, setMemoLoaded] = useState(false);
   const [insightLoading, setInsightLoading] = useState(false);
+  const [agentSuggestions, setAgentSuggestions] = useState<AgentSuggestion[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  useEffect(() => {
-    const loadUser = async () => {
-      const userData = await StorageService.getUser();
-      setUser(userData);
-      if (userData?.id) {
-        // If we have a memoId, create a fresh session for this memo
-        if (params.memoId) {
-          await createMemoSpecificSession(userData.id);
-        } else {
-          loadSessions();
+  // Load user whenever screen is focused
+  useFocusEffect(
+    React.useCallback(() => {
+      const loadUser = async () => {
+        const userData = await StorageService.getUser();
+        setUser(userData);
+        if (userData?.id) {
+          // If we have a memoId, create a fresh session for this memo
+          if (params.memoId) {
+            await createMemoSpecificSession(userData.id);
+          } else if (!currentSession) {
+            loadSessions();
+          }
         }
-      }
-    };
-    loadUser();
-  }, [params.memoId]);
+      };
+      loadUser();
+    }, [params.memoId, currentSession])
+  );
 
   // Load memo insight when memo ID is provided and session is ready
   useEffect(() => {
@@ -73,8 +79,22 @@ const ChatScreen: React.FC = () => {
           const memo = await VoiceMemoService.getMemo(params.memoId);
           if (memo) {
             setSelectedMemo(memo);
+            
+            // Generate personal insight
             const insight = await PersonalCompanionService.generatePersonalInsight(memo);
             setMemoInsight(insight);
+            
+            // Generate AI agent suggestions
+            setSuggestionsLoading(true);
+            try {
+              const suggestions = await AgentService.suggestActions(memo);
+              setAgentSuggestions(suggestions);
+            } catch (error) {
+              console.error('Error generating agent suggestions:', error);
+            } finally {
+              setSuggestionsLoading(false);
+            }
+            
             setMemoLoaded(true);
           }
         } catch (error) {
@@ -174,7 +194,45 @@ const ChatScreen: React.FC = () => {
   };
 
   const sendTextMessage = async () => {
-    if (!textInput.trim() || !currentSession) return;
+    if (!textInput.trim()) return;
+    
+    // Auto-create session if none exists
+    if (!currentSession) {
+      if (!user?.id) {
+        Alert.alert('Error', 'Please log in to use chat');
+        return;
+      }
+      
+      console.log('No session found, creating one automatically...');
+      try {
+        const timestamp = new Date().toLocaleString();
+        const newSession = await ChatService.createSession(user.id, `Chat ${timestamp}`);
+        setCurrentSession(newSession);
+        setMessages([]);
+        
+        // Continue with sending the message using the new session
+        const userMessage = textInput;
+        setTextInput('');
+        
+        setIsLoading(true);
+        await ChatService.loadSession(newSession.id);
+        const response = await ChatService.sendMessage(userMessage);
+        
+        if (response) {
+          const updatedSession = { ...newSession, messages: [response.userMessage, response.aiResponse] };
+          setCurrentSession(updatedSession);
+          setMessages(updatedSession.messages);
+          await handlePotentialAction(userMessage);
+        }
+        setIsLoading(false);
+        return;
+      } catch (error) {
+        console.error('Error creating session:', error);
+        Alert.alert('Error', 'Failed to create chat session. Please try again.');
+        setIsLoading(false);
+        return;
+      }
+    }
 
     const userMessage = textInput;
     setTextInput('');
@@ -198,7 +256,10 @@ const ChatScreen: React.FC = () => {
       }
     } catch (error) {
       console.error('Error sending message:', error);
-      Alert.alert('Error', 'Failed to send message. Please try again.');
+      const errorMessage = error instanceof Error ? error.message : 'Failed to send message. Please try again.';
+      Alert.alert('Error', errorMessage);
+      // Restore the message if it failed
+      setTextInput(userMessage);
     } finally {
       setIsLoading(false);
     }
@@ -210,19 +271,51 @@ const ChatScreen: React.FC = () => {
    */
   const handlePotentialAction = async (userMessage: string) => {
     try {
+      if (!user?.id) return;
+
       // Use AgentActionManager to process message for actions
       const createdActions = await AgentActionManager.processMessageForActions(userMessage, {
         memoId: params.memoId,
-        userId: user?.id,
+        userId: user.id,
       });
 
       if (createdActions.length > 0) {
         console.log(`Created ${createdActions.length} action(s) from message`);
-        // Actions are automatically saved and listeners are notified
+        
+        // Show confirmation to user about created actions
+        const actionSummary = createdActions.map(action => {
+          const emoji = action.type === 'alarm' ? '⏰' : 
+                       action.type === 'reminder' ? '🔔' : 
+                       action.type === 'calendar' ? '📅' : 
+                       action.type === 'task' ? '✓' : '📝';
+          return `${emoji} ${action.title}`;
+        }).join('\n');
+        
+        Alert.alert(
+          '✅ Actions Created',
+          `I've created the following for you:\n\n${actionSummary}`,
+          [{ text: 'Great!', style: 'default' }]
+        );
+        
+        // Add AI message confirming the actions
+        if (currentSession) {
+          const confirmMessage: ChatMessage = {
+            id: `confirm-${Date.now()}`,
+            role: 'assistant',
+            content: `I've successfully created ${createdActions.length} action(s) for you. You can find them on your home screen!`,
+            timestamp: new Date().toISOString(),
+          };
+          
+          const updatedMessages = [...messages, confirmMessage];
+          const updatedSession = { ...currentSession, messages: updatedMessages };
+          setCurrentSession(updatedSession);
+          setMessages(updatedMessages);
+        }
       }
     } catch (error) {
       console.error('Error handling potential action:', error);
-      // Don't alert user - this is a non-critical background process
+      // Show error to user since actions are a key feature
+      Alert.alert('Action Error', 'I understood your request but had trouble creating the action. Please try again.');
     }
   };
 
@@ -253,7 +346,38 @@ const ChatScreen: React.FC = () => {
       setIsRecording(false);
       setRecordingTime(0);
 
-      if (!audioUri || !currentSession) return;
+      if (!audioUri) return;
+      
+      // Auto-create session if none exists
+      if (!currentSession) {
+        if (!user?.id) {
+          Alert.alert('Error', 'Please log in to use chat');
+          return;
+        }
+        
+        console.log('No session found, creating one for voice message...');
+        const timestamp = new Date().toLocaleString();
+        const newSession = await ChatService.createSession(user.id, `Chat ${timestamp}`);
+        setCurrentSession(newSession);
+        setMessages([]);
+        
+        // Continue with processing voice message
+        setIsLoading(true);
+        const transcription = await ChatService.transcribeAudio(audioUri);
+        
+        if (transcription) {
+          await ChatService.loadSession(newSession.id);
+          const response = await ChatService.sendMessage(transcription, audioUri);
+          if (response) {
+            const updatedSession = { ...newSession, messages: [response.userMessage, response.aiResponse] };
+            setCurrentSession(updatedSession);
+            setMessages(updatedSession.messages);
+            await handlePotentialAction(transcription);
+          }
+        }
+        setIsLoading(false);
+        return;
+      }
 
       setIsLoading(true);
       const transcription = await ChatService.transcribeAudio(audioUri);
@@ -349,6 +473,108 @@ const ChatScreen: React.FC = () => {
   };
 
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const [createdActionIds, setCreatedActionIds] = useState<Set<string>>(new Set());
+
+  const handleCreateAction = async (suggestion: AgentSuggestion) => {
+    try {
+      if (!user?.id) {
+        Alert.alert('Error', 'You must be logged in to create actions');
+        return;
+      }
+
+      // Check if already created
+      const actionKey = `${suggestion.action.title}-${suggestion.action.type}`;
+      if (createdActionIds.has(actionKey)) {
+        Alert.alert('Already Created', 'You have already created this action');
+        return;
+      }
+
+      // Enhanced confirmation dialog with more options
+      Alert.alert(
+        '🤖 Create Action',
+        `Type: ${suggestion.action.type.replace('_', ' ').toUpperCase()}\nTitle: "${suggestion.action.title}"\n\n💡 Why this matters:\n${suggestion.reason}\n\nPriority: ${suggestion.action.priority?.toUpperCase() || 'MEDIUM'}\nDue: ${suggestion.action.dueDate ? new Date(suggestion.action.dueDate).toLocaleDateString() : 'Not set'}${suggestion.action.dueTime ? ` at ${suggestion.action.dueTime}` : ''}`,
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel',
+          },
+          {
+            text: 'Edit First',
+            onPress: () => {
+              // Show edit dialog
+              Alert.prompt(
+                'Edit Action Title',
+                'Modify the title if needed:',
+                [
+                  {
+                    text: 'Cancel',
+                    style: 'cancel',
+                  },
+                  {
+                    text: 'Create',
+                    onPress: async (newTitle?: string) => {
+                      if (newTitle && newTitle.trim()) {
+                        suggestion.action.title = newTitle.trim();
+                      }
+                      await createActionFromSuggestion(suggestion, actionKey);
+                    },
+                  },
+                ],
+                'plain-text',
+                suggestion.action.title
+              );
+            },
+          },
+          {
+            text: 'Create Now',
+            onPress: async () => {
+              await createActionFromSuggestion(suggestion, actionKey);
+            },
+            style: 'default',
+          },
+        ]
+      );
+    } catch (error) {
+      console.error('Error in handleCreateAction:', error);
+      Alert.alert('Error', 'Failed to process action');
+    }
+  };
+
+  const createActionFromSuggestion = async (suggestion: AgentSuggestion, actionKey: string) => {
+    try {
+      // Create the action
+      const createdAction = await AgentService.createAction(
+        suggestion.action,
+        user!.id
+      );
+
+      // Link action to memo if we have a selected memo
+      if (selectedMemo) {
+        await VoiceMemoService.linkActionToMemo(
+          selectedMemo.id,
+          user!.id,
+          createdAction.id
+        );
+      }
+
+      // Mark as created
+      setCreatedActionIds(new Set([...createdActionIds, actionKey]));
+
+      Alert.alert(
+        '✅ Success',
+        `${suggestion.action.type === 'task' ? 'Task' : suggestion.action.type === 'reminder' ? 'Reminder' : 'Calendar event'} created successfully!\n\nYou can view it in the Home tab.`,
+        [
+          { text: 'OK' },
+        ]
+      );
+
+      // Remove this suggestion from the list (optional - keep it to show status)
+      // setAgentSuggestions(agentSuggestions.filter(s => s.action.title !== suggestion.action.title));
+    } catch (error) {
+      console.error('Error creating action:', error);
+      Alert.alert('Error', 'Failed to create action');
+    }
+  };
 
   const renderMessage = ({ item }: { item: ChatMessage }) => {
     const isUserMessage = item.role === 'user';
@@ -474,6 +700,116 @@ const ChatScreen: React.FC = () => {
           </View>
         )}
 
+        {/* AI Agent Suggestions */}
+        {agentSuggestions && agentSuggestions.length > 0 && (
+          <View style={styles.agentSuggestionsContainer}>
+            <Text style={styles.agentSuggestionsTitle}>
+              🤖 AI Suggested Actions
+            </Text>
+            <Text style={styles.agentSuggestionsSubtitle}>
+              I analyzed your memo and found these actionable items:
+            </Text>
+            
+            {agentSuggestions.map((suggestion, index) => {
+              const actionKey = `${suggestion.action.title}-${suggestion.action.type}`;
+              const isCreated = createdActionIds.has(actionKey);
+              
+              return (
+              <View key={index} style={[
+                styles.suggestionCard,
+                isCreated && styles.suggestionCardCreated
+              ]}>
+                {/* Created Badge */}
+                {isCreated && (
+                  <View style={styles.createdBadge}>
+                    <Text style={styles.createdBadgeText}>✅ Created</Text>
+                  </View>
+                )}
+
+                <View style={styles.suggestionHeader}>
+                  <View style={styles.suggestionIconContainer}>
+                    <Text style={styles.suggestionIcon}>
+                      {suggestion.action.type === 'task' && '✓'}
+                      {suggestion.action.type === 'reminder' && '🔔'}
+                      {suggestion.action.type === 'calendar_event' && '📅'}
+                    </Text>
+                  </View>
+                  <View style={styles.suggestionInfo}>
+                    <View style={styles.suggestionTitleRow}>
+                      <Text style={styles.suggestionTitle}>
+                        {suggestion.action.title}
+                      </Text>
+                      <View style={[
+                        styles.priorityBadge,
+                        suggestion.action.priority === 'high' && styles.priorityHigh,
+                        suggestion.action.priority === 'medium' && styles.priorityMedium,
+                        suggestion.action.priority === 'low' && styles.priorityLow,
+                      ]}>
+                        <Text style={styles.priorityText}>
+                          {suggestion.action.priority}
+                        </Text>
+                      </View>
+                    </View>
+                    {suggestion.action.description && (
+                      <Text style={styles.suggestionDescription}>
+                        {suggestion.action.description}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+
+                {/* Due Date/Time */}
+                {(suggestion.action.dueDate || suggestion.action.dueTime) && (
+                  <View style={styles.suggestionDateRow}>
+                    <Text style={styles.suggestionDateLabel}>Due:</Text>
+                    <Text style={styles.suggestionDateValue}>
+                      {suggestion.action.dueDate && new Date(suggestion.action.dueDate).toLocaleDateString()}
+                      {suggestion.action.dueTime && ` at ${suggestion.action.dueTime}`}
+                    </Text>
+                  </View>
+                )}
+
+                {/* AI Reasoning */}
+                <View style={styles.suggestionReasonBox}>
+                  <Text style={styles.suggestionReasonLabel}>💡 Why this matters:</Text>
+                  <Text style={styles.suggestionReasonText}>
+                    {suggestion.reason}
+                  </Text>
+                </View>
+
+                {/* Create Action Button */}
+                <TouchableOpacity
+                  style={[
+                    styles.createActionButton,
+                    isCreated && styles.createActionButtonDisabled
+                  ]}
+                  onPress={() => !isCreated && handleCreateAction(suggestion)}
+                  activeOpacity={isCreated ? 1 : 0.7}
+                  disabled={isCreated}
+                >
+                  <Text style={[
+                    styles.createActionButtonText,
+                    isCreated && styles.createActionButtonTextDisabled
+                  ]}>
+                    {isCreated ? '✓ Already Created' : `➕ Create ${suggestion.action.type === 'task' ? 'Task' : suggestion.action.type === 'reminder' ? 'Reminder' : 'Event'}`}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              );
+            })}
+          </View>
+        )}
+
+        {/* Loading state for suggestions */}
+        {suggestionsLoading && (
+          <View style={styles.suggestionLoadingContainer}>
+            <ActivityIndicator size="small" color="#667EEA" />
+            <Text style={styles.suggestionLoadingText}>
+              Analyzing memo for actionable items...
+            </Text>
+          </View>
+        )}
+
         {/* Ask More Questions, Save, and Share Buttons */}
         <View style={styles.insightActionContainer}>
           <View style={styles.insightButtonRow}>
@@ -581,6 +917,19 @@ const ChatScreen: React.FC = () => {
               </Text>
             </TouchableOpacity>
           </View>
+          <TouchableOpacity 
+            style={styles.addMembersButton} 
+            onPress={() => {
+              Alert.alert(
+                '🚀 Upcoming Feature',
+                'Adding members to group planning is coming soon! Stay tuned for collaborative planning features.',
+                [{ text: 'Got it!', style: 'default' }]
+              );
+            }}
+          >
+            <Ionicons name="people-outline" size={20} color="#007AFF" />
+            <Text style={styles.addMembersText}>Add</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.newChatButton} onPress={createNewSession}>
             <Ionicons name="add-circle" size={24} color="#007AFF" />
           </TouchableOpacity>
@@ -723,6 +1072,21 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#000',
     flex: 1,
+  },
+  addMembersButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#F0F7FF',
+    borderRadius: 16,
+    marginRight: 8,
+  },
+  addMembersText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#007AFF',
   },
   newChatButton: {
     padding: 8,
@@ -1188,6 +1552,183 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#007AFF',
+  },
+  // AI Agent Suggestion Styles
+  agentSuggestionsContainer: {
+    marginTop: 20,
+    marginBottom: 16,
+    paddingHorizontal: 12,
+  },
+  agentSuggestionsTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#667EEA',
+    marginBottom: 8,
+  },
+  agentSuggestionsSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 16,
+    lineHeight: 20,
+  },
+  suggestionCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 2,
+    borderColor: '#667EEA',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  suggestionHeader: {
+    flexDirection: 'row',
+    marginBottom: 12,
+  },
+  suggestionIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F0F4FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  suggestionInfo: {
+    flex: 1,
+  },
+  suggestionTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 6,
+  },
+  suggestionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000',
+    flex: 1,
+    marginRight: 8,
+  },
+  suggestionDescription: {
+    fontSize: 14,
+    color: '#666',
+    lineHeight: 20,
+  },
+  priorityHigh: {
+    backgroundColor: '#FFE8E8',
+    borderColor: '#FF3B30',
+  },
+  priorityMedium: {
+    backgroundColor: '#FFF4E6',
+    borderColor: '#FF9500',
+  },
+  priorityLow: {
+    backgroundColor: '#E8F5E9',
+    borderColor: '#34C759',
+  },
+  priorityText: {
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    color: '#666',
+  },
+  suggestionDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  suggestionDateLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#666',
+    marginRight: 6,
+  },
+  suggestionDateValue: {
+    fontSize: 13,
+    color: '#333',
+  },
+  suggestionReasonBox: {
+    backgroundColor: '#F9FAFB',
+    borderLeftWidth: 3,
+    borderLeftColor: '#667EEA',
+    borderRadius: 6,
+    padding: 12,
+    marginTop: 12,
+    marginBottom: 12,
+  },
+  suggestionReasonLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#667EEA',
+    marginBottom: 4,
+  },
+  suggestionReasonText: {
+    fontSize: 13,
+    color: '#555',
+    lineHeight: 19,
+  },
+  createActionButton: {
+    backgroundColor: '#667EEA',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  createActionButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  suggestionLoadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+    marginTop: 12,
+    marginBottom: 12,
+  },
+  suggestionLoadingText: {
+    fontSize: 14,
+    color: '#666',
+    marginLeft: 12,
+  },
+  suggestionCardCreated: {
+    opacity: 0.7,
+    borderColor: '#4CAF50',
+    borderWidth: 2,
+  },
+  createdBadge: {
+    position: 'absolute',
+    top: -10,
+    right: 12,
+    backgroundColor: '#4CAF50',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    zIndex: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  createdBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  createActionButtonDisabled: {
+    backgroundColor: '#E0E0E0',
+    opacity: 0.6,
+  },
+  createActionButtonTextDisabled: {
+    color: '#999',
   },
 });
 

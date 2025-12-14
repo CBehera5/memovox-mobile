@@ -20,6 +20,9 @@ export interface VoiceMemo {
   updatedAt: string;
   aiAnalysis?: AIAnalysis;
   metadata?: MemoMetadata;
+  linkedActions?: string[]; // IDs of created actions
+  isCompleted?: boolean;
+  completedAt?: string;
 }
 
 export type MemoCategory = 
@@ -92,4 +95,43 @@ export interface AIServiceConfig {
   provider: 'anthropic' | 'openai' | 'groq' | 'mock';
   apiKey?: string;
   model?: string;
+}
+
+// Agent Action Types
+export interface AgentAction {
+  id: string;
+  userId: string;
+  type: 'reminder' | 'calendar_event' | 'task';
+  title: string;
+  description?: string;
+  dueDate?: string;
+  dueTime?: string;
+  priority: 'low' | 'medium' | 'high';
+  status: 'pending' | 'completed' | 'cancelled';
+  createdFrom: string; // memo ID
+  createdAt: string;
+  completedAt?: string;
+  linkedMemoId?: string;
+}
+
+export interface AgentSuggestion {
+  action: AgentAction;
+  reason: string;
+  confidence: number; // 0-1
+}
+
+export interface CompletionStats {
+  totalTasks: number;
+  completedTasks: number;
+  percentage: number;
+  trend: 'up' | 'down' | 'stable';
+  weeklyCompletion: number;
+  monthlyCompletion: number;
+}
+
+export interface SmartTask {
+  memo: VoiceMemo;
+  reason: string;
+  priority: number;
+  suggestedAction?: string;
 }

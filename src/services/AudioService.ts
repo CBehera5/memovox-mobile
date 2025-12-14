@@ -14,26 +14,52 @@ export class AudioService {
   private sound: Audio.Sound | null = null;
   private recordingStartTime: number = 0;
   private durationInterval: NodeJS.Timeout | null = null;
+  private permissionsGranted: boolean = false;
 
   constructor() {
-    // Request audio permissions
-    this.requestAudioPermissions();
+    // Initialize audio mode but don't request permissions yet
+    this.initializeAudioMode();
   }
 
-  private async requestAudioPermissions(): Promise<void> {
+  private async initializeAudioMode(): Promise<void> {
     try {
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== 'granted') {
-        console.warn('Audio permissions not granted');
-      }
       // Set audio mode for recording
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
         shouldDuckAndroid: true,
+        staysActiveInBackground: false,
       });
     } catch (error) {
+      console.error('Error initializing audio mode:', error);
+    }
+  }
+
+  /**
+   * Check and request audio permissions
+   */
+  async ensurePermissions(): Promise<boolean> {
+    try {
+      // First check if we already have permissions
+      const { status: existingStatus } = await Audio.getPermissionsAsync();
+      
+      if (existingStatus === 'granted') {
+        this.permissionsGranted = true;
+        return true;
+      }
+
+      // Request permissions if not granted
+      const { status } = await Audio.requestPermissionsAsync();
+      this.permissionsGranted = status === 'granted';
+      
+      if (!this.permissionsGranted) {
+        console.warn('Audio permissions denied by user');
+      }
+      
+      return this.permissionsGranted;
+    } catch (error) {
       console.error('Error requesting audio permissions:', error);
+      return false;
     }
   }
 
@@ -45,6 +71,12 @@ export class AudioService {
       if (this.isRecording) {
         console.warn('Already recording');
         return;
+      }
+
+      // CRITICAL: Ensure permissions are granted before recording
+      const hasPermissions = await this.ensurePermissions();
+      if (!hasPermissions) {
+        throw new Error('Microphone permission is required to record audio. Please grant permission in your device settings.');
       }
 
       // Reset state

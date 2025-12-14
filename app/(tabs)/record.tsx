@@ -13,10 +13,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
+import * as FileSystemLegacy from 'expo-file-system/legacy';
 import AudioService, { AudioService as AudioServiceClass } from '../../src/services/AudioService';
 import AIService from '../../src/services/AIService';
 import AuthService from '../../src/services/AuthService';
 import VoiceMemoService from '../../src/services/VoiceMemoService';
+import AgentService from '../../src/services/AgentService';
 import StorageService from '../../src/services/StorageService';
 import NotificationService from '../../src/services/NotificationService';
 import PersonaService from '../../src/services/PersonaService';
@@ -58,7 +60,19 @@ export default function Record() {
         console.log('Haptics not available (web platform)');
       }
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to start recording');
+      console.error('Failed to start recording:', error);
+      // Show user-friendly error message
+      if (error.message?.includes('permission')) {
+        Alert.alert(
+          'Permission Required', 
+          'Microphone permission is required to record audio. Please grant permission in your device settings.',
+          [
+            { text: 'OK' }
+          ]
+        );
+      } else {
+        Alert.alert('Error', error.message || 'Failed to start recording');
+      }
     }
   };
 
@@ -97,19 +111,9 @@ export default function Record() {
       console.log('🔴 DEBUG: processRecording START');
       console.log('Processing recording:', audioUri);
       
-      // Transcribe and analyze
-      console.log('🔴 DEBUG: About to call AIService.transcribeAndAnalyze');
-      console.log('Starting AI analysis...');
-      const analysis = await AIService.transcribeAndAnalyze(audioUri);
-      console.log('🔴 DEBUG: AIService returned:', analysis);
-      console.log('Analysis complete:', analysis);
-      
       // Get current user from Supabase Auth
-      console.log('🔴 DEBUG: About to call AuthService.getCurrentUser');
       const user = await AuthService.getCurrentUser();
-      console.log('🔴 DEBUG: getCurrentUser returned:', user);
       if (!user) {
-        console.log('🔴 DEBUG: User is null!');
         Alert.alert('Error', 'You must be logged in to save memos');
         setIsProcessing(false);
         return;
@@ -117,7 +121,39 @@ export default function Record() {
 
       // Convert audio URI to blob for upload
       console.log('🔴 DEBUG: Converting audio URI to blob');
-      const audioBlob = await fetch(audioUri).then(r => r.blob());
+      let audioBlob: Blob;
+      
+      try {
+        if (audioUri.startsWith('file://')) {
+          // Use FileSystem to read local file
+          console.log('🔴 DEBUG: Reading file from filesystem');
+          const base64Data = await FileSystemLegacy.readAsStringAsync(audioUri, {
+            encoding: 'base64',
+          });
+          
+          // Convert base64 to binary string
+          const binaryString = atob(base64Data);
+          let blobData = '';
+          for (let i = 0; i < binaryString.length; i++) {
+            blobData += String.fromCharCode(binaryString.charCodeAt(i));
+          }
+          
+          audioBlob = new Blob([blobData], { type: 'audio/mp4', lastModified: Date.now() });
+          console.log('🔴 DEBUG: audioBlob created from filesystem, size:', audioBlob.size);
+        } else {
+          // Fallback to fetch for other URIs
+          console.log('🔴 DEBUG: Fetching audio from:', audioUri);
+          const response = await fetch(audioUri);
+          audioBlob = await response.blob();
+          console.log('🔴 DEBUG: audioBlob created from fetch, size:', audioBlob.size);
+        }
+      } catch (blobError) {
+        console.error('🔴 DEBUG: Error creating audioBlob:', blobError);
+        Alert.alert('Error', 'Failed to process audio file');
+        setIsProcessing(false);
+        return;
+      }
+      
       const memoId = generateId();
       console.log('🔴 DEBUG: audioBlob created, memoId:', memoId);
 
@@ -132,18 +168,23 @@ export default function Record() {
       );
       console.log('🔴 DEBUG: Upload returned audioUrl:', audioUrl);
 
-      if (!audioUrl) {
-        console.log('🔴 DEBUG: audioUrl is null after upload!');
-        Alert.alert('Error', 'Failed to upload audio');
-        setIsProcessing(false);
-        return;
-      }
+      // If upload failed or returned local path, use local audioUri for transcription
+      const transcriptionUri = (audioUrl && audioUrl.startsWith('http')) ? audioUrl : audioUri;
+      console.log('🔴 DEBUG: Using URI for transcription:', transcriptionUri.substring(0, 50));
 
-      // Create memo object
+      // Transcribe and analyze (works with both remote URL and local file://)
+      console.log('🔴 DEBUG: Calling AIService.transcribeAndAnalyze');
+      const analysis = await AIService.transcribeAndAnalyze(transcriptionUri);
+      console.log('Analysis complete:', analysis);
+
+      // Use audioUrl for storage if available, otherwise use local URI
+      const finalAudioUri = audioUrl || audioUri;
+
+      // Create memo object using analysis
       const memo: VoiceMemo = {
         id: memoId,
         userId: user.id,
-        audioUri: audioUrl,
+        audioUri: finalAudioUri,
         transcription: analysis.transcription,
         category: analysis.category,
         type: analysis.type,
@@ -155,20 +196,38 @@ export default function Record() {
         metadata: analysis.metadata,
       };
 
-      console.log('🔴 DEBUG: Memo object created');
-      console.log('Saving memo to Supabase:', memo);
-      
       // Save memo to database
-      console.log('🔴 DEBUG: About to call VoiceMemoService.saveMemo');
+      console.log('Saving memo to Supabase:', memo);
       await VoiceMemoService.saveMemo(memo);
-      console.log('🔴 DEBUG: saveMemo returned');
       console.log('Memo saved successfully');
 
-      // Create notifications based on type
-      if (memo.type === 'event') {
-        await NotificationService.createEventNotification(memo);
-      } else if (memo.type === 'reminder') {
-        await NotificationService.createReminderNotification(memo);
+      // Auto-create agent actions from AI analysis action items
+      if (analysis.analysis?.actionItems && analysis.analysis.actionItems.length > 0) {
+        console.log('🔴 DEBUG: Creating agent actions from action items');
+        for (const actionItem of analysis.analysis.actionItems) {
+          try {
+            const actionData: any = {
+              id: `action-${Date.now()}-${Math.random()}`,
+              userId: user.id,
+              title: actionItem,
+              description: `From memo: ${analysis.title}`,
+              type: memo.type === 'event' ? 'calendar_event' : memo.type === 'reminder' ? 'reminder' : 'task',
+              priority: (memo.metadata?.priority || 'medium'),
+              dueDate: memo.metadata?.eventDate || memo.metadata?.reminderDate,
+              dueTime: memo.metadata?.eventTime,
+              linkedMemoId: memoId,
+              createdFrom: memoId,
+              status: 'pending',
+              createdAt: new Date().toISOString(),
+            };
+            const createdAction = await AgentService.createAction(actionData, user.id);
+            console.log('🔴 DEBUG: Action created:', createdAction?.id);
+          } catch (actionError) {
+            console.error('Error creating agent action:', actionError);
+            // Don't fail the whole process if one action fails
+          }
+        }
+        console.log('🔴 DEBUG: All agent actions created');
       }
 
       // Update persona
@@ -189,7 +248,6 @@ export default function Record() {
       Alert.alert('Success', `Memo "${analysis.title}" saved and analyzed!`);
     } catch (error: any) {
       console.error('🔴 DEBUG: Processing error caught:', error);
-      console.error('Processing error:', error);
       Alert.alert('Processing Error', error.message || 'Failed to process recording');
     } finally {
       setIsProcessing(false);
@@ -273,7 +331,7 @@ export default function Record() {
               disabled={isProcessing}
             >
               <LinearGradient
-                colors={isRecording ? [COLORS.error, '#dc2626'] : GRADIENTS.primary}
+                colors={isRecording ? [COLORS.error, '#dc2626'] as any : GRADIENTS.primary}
                 style={styles.recordButtonGradient}
               >
                 <Text style={styles.recordButtonIcon}>

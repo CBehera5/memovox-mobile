@@ -265,6 +265,14 @@ export default function Profile() {
             <Text style={styles.dangerButtonText}>Clear All Data</Text>
           </TouchableOpacity>
 
+          {/* Developer Section */}
+          <TouchableOpacity
+            style={styles.testButton}
+            onPress={() => router.push('/test-agent')}
+          >
+            <Text style={styles.testButtonText}>🧪 Test AgentService</Text>
+          </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.logoutButton}
             onPress={handleLogout}
@@ -491,6 +499,18 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   dangerButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.white,
+  },
+  testButton: {
+    backgroundColor: '#667eea',
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  testButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: COLORS.white,

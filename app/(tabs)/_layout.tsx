@@ -2,6 +2,7 @@
 
 import { Tabs } from 'expo-router';
 import { COLORS } from '../../src/constants';
+import { Text } from 'react-native';
 
 export default function TabsLayout() {
   return (
@@ -45,7 +46,7 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="chat"
         options={{
-          title: 'Talk to me',
+          title: "Let's plan",
           tabBarIcon: ({ color, size }) => (
             <TabIcon name="💬" color={color} />
           ),
@@ -79,5 +80,5 @@ interface TabIconProps {
 }
 
 function TabIcon({ name, color }: TabIconProps) {
-  return <span style={{ fontSize: 24, opacity: color === COLORS.primary ? 1 : 0.5 }}>{name}</span>;
+  return <Text style={{ fontSize: 24, opacity: color === COLORS.primary ? 1 : 0.5 }}>{name}</Text>;
 }

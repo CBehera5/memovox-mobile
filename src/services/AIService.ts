@@ -22,7 +22,7 @@ class AIService {
   private groqClient: Groq | null = null;
 
   constructor() {
-    // Initialize Groq client with the API key
+    // Initialize Groq client with the API key from environment
     if (this.config.apiKey) {
       try {
         this.groqClient = new Groq({
@@ -78,19 +78,24 @@ class AIService {
     try {
       console.log('Starting transcription and analysis for:', audioUri);
       
-      // Get sample transcription (in production, this would use actual speech-to-text)
+      // Get transcription using Groq Whisper
       const transcription = await this.transcribeAudio(audioUri);
-      console.log('Transcription:', transcription);
+      console.log('Transcription result:', transcription.substring(0, 100));
+      
+      // Check if transcription actually worked
+      if (!transcription || transcription.trim().length === 0) {
+        throw new Error('No speech detected in the recording. Please try again and speak clearly.');
+      }
       
       // Analyze with Groq
       const analysis = await this.analyzeTranscription(transcription);
-      console.log('Analysis completed:', analysis);
+      console.log('Analysis completed successfully');
       
       return analysis;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error in transcription and analysis:', error);
-      // Fall back to mock data
-      return this.mockTranscribeAndAnalyze();
+      // Re-throw the error with the original message so the UI can show it
+      throw error;
     }
   }
 
@@ -103,64 +108,87 @@ class AIService {
 
     try {
       console.log('Transcribing audio using Groq Whisper API...');
+      console.log('Audio URI type:', audioUri.substring(0, 50));
       
-      let audioFile: any;
+      // For React Native, we need to use FormData and native fetch
+      // Groq SDK's File handling doesn't work properly in RN
+      const formData = new FormData();
       
-      // Convert audio URI to File or Blob that Groq can accept
-      if (audioUri.startsWith('data:audio/')) {
-        // It's a data URI - convert to Blob
+      // Add the audio file to FormData
+      if (audioUri.startsWith('file://')) {
+        console.log('Processing file:// URI with FormData...');
+        formData.append('file', {
+          uri: audioUri,
+          type: 'audio/mp4',
+          name: 'audio.m4a',
+        } as any);
+      } else if (audioUri.startsWith('http://') || audioUri.startsWith('https://')) {
+        console.log('Fetching remote URL and converting to FormData entry...');
+        const response = await fetch(audioUri);
+        const blob = await response.blob();
+        formData.append('file', {
+          uri: audioUri,
+          type: 'audio/mp4',
+          name: 'audio.m4a',
+        } as any);
+      } else if (audioUri.startsWith('data:audio/')) {
+        console.log('Converting data URI to FormData entry...');
         const base64Data = audioUri.split(',')[1];
-        const binaryString = atob(base64Data); // Browser's base64 decoder
+        const binaryString = atob(base64Data);
         const bytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) {
           bytes[i] = binaryString.charCodeAt(i);
         }
-        const blob = new Blob([bytes as any], { 
-          type: 'audio/webm',
-          lastModified: Date.now()
-        });
-        // Convert Blob to File with a name
-        audioFile = new File([blob], 'audio.webm', { 
-          type: 'audio/webm',
-          lastModified: Date.now()
-        });
-      } else if (audioUri.startsWith('file://')) {
-        // It's a file URL - fetch and convert to File
-        const response = await fetch(audioUri);
-        const blob = await response.blob();
-        audioFile = new File([blob], 'audio.m4a', { 
+        // Create a blob-like object for FormData
+        formData.append('file', {
+          uri: `data:audio/mp4;base64,${base64Data}`,
           type: 'audio/mp4',
-          lastModified: Date.now()
-        });
+          name: 'audio.m4a',
+        } as any);
       } else {
-        // Try to fetch as a URL
-        try {
-          const response = await fetch(audioUri);
-          const blob = await response.blob();
-          audioFile = new File([blob], 'audio.m4a', { 
-            type: 'audio/mp4',
-            lastModified: Date.now()
-          });
-        } catch (e) {
-          console.error('Could not fetch audio from URI:', audioUri);
-          return 'Audio not available for transcription';
-        }
+        throw new Error('Unsupported audio URI format');
       }
+      
+      // Add other required parameters
+      formData.append('model', 'whisper-large-v3-turbo');
+      formData.append('language', 'en');
+      formData.append('response_format', 'text');
 
-      console.log('Sending audio file to Groq Whisper API...');
-      const transcription = await this.groqClient.audio.transcriptions.create({
-        file: audioFile,
-        model: 'whisper-large-v3-turbo',
-        language: 'en',
-        response_format: 'text',
+      console.log('Sending request to Groq API...');
+      
+      // Use native fetch instead of Groq SDK for better React Native compatibility
+      const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.config.apiKey}`,
+        },
+        body: formData,
       });
 
-      const transcribedText = typeof transcription === 'string' ? transcription : (transcription as any).text || '';
-      console.log('Transcription from Groq Whisper:', transcribedText);
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Groq API error response:', errorText);
+        throw new Error(`API returned ${response.status}: ${errorText}`);
+      }
+
+      const transcribedText = await response.text();
+      console.log('Transcription from Groq Whisper successful:', transcribedText.substring(0, 100));
       return transcribedText;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error transcribing audio with Groq:', error);
-      return 'Transcription failed';
+      
+      // Provide more helpful error messages
+      if (error.message?.includes('internet connection')) {
+        throw new Error('No internet connection. Please check your network and try again.');
+      } else if (error.message?.includes('rate limit')) {
+        throw new Error('Too many requests. Please wait a moment and try again.');
+      } else if (error.message?.includes('empty')) {
+        throw new Error('Recording is empty. Please try recording again.');
+      } else if (error.status === 401) {
+        throw new Error('API authentication failed. Please contact support.');
+      } else {
+        throw new Error(`Transcription failed: ${error.message || 'Unknown error'}. Please try again or check your internet connection.`);
+      }
     }
   }
 

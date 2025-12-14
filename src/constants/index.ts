@@ -23,15 +23,27 @@ export const COLORS = {
     700: '#374151',
     800: '#1f2937',
     900: '#111827',
+  },
+  green: {
+    50: '#f0fdf4',
+    100: '#dcfce7',
+    200: '#bbf7d0',
+    300: '#86efac',
+    400: '#4ade80',
+    500: '#22c55e',
+    600: '#16a34a',
+    700: '#15803d',
+    800: '#166534',
+    900: '#14532d',
   }
 };
 
 export const GRADIENTS = {
-  primary: ['#6366f1', '#8b5cf6'],
-  secondary: ['#8b5cf6', '#ec4899'],
-  success: ['#10b981', '#059669'],
-  warm: ['#f59e0b', '#ec4899'],
-  cool: ['#06b6d4', '#6366f1'],
+  primary: ['#6366f1', '#8b5cf6'] as const,
+  secondary: ['#8b5cf6', '#ec4899'] as const,
+  success: ['#10b981', '#059669'] as const,
+  warm: ['#f59e0b', '#ec4899'] as const,
+  cool: ['#06b6d4', '#6366f1'] as const,
 };
 
 export const CATEGORY_COLORS: Record<MemoCategory, string> = {

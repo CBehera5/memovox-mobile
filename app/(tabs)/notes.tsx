@@ -1,6 +1,7 @@
 // app/(tabs)/notes.tsx
 
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -16,6 +17,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
+import { Audio } from 'expo-av';
 import StorageService from '../../src/services/StorageService';
 import VoiceMemoService from '../../src/services/VoiceMemoService';
 import AuthService from '../../src/services/AuthService';
@@ -53,14 +55,85 @@ export default function Notes() {
   const [selectedCategory, setSelectedCategory] = useState<MemoCategory | 'All'>('All');
   const [selectedType, setSelectedType] = useState<MemoType | 'All'>('All');
   const [searchQuery, setSearchQuery] = useState('');
+  
+  // Audio playback state
+  const [sound, setSound] = useState<Audio.Sound | null>(null);
+  const [playingMemoId, setPlayingMemoId] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
 
   useEffect(() => {
     loadMemos();
   }, []);
 
+  // Reload memos when screen comes into focus (e.g., after creating tasks in chat)
+  useFocusEffect(
+    useCallback(() => {
+      console.log('Notes screen focused - reloading memos...');
+      loadMemos();
+    }, [])
+  );
+
   useEffect(() => {
     filterMemos();
   }, [memos, selectedCategory, selectedType, searchQuery]);
+
+  // Cleanup audio on unmount
+  useEffect(() => {
+    return () => {
+      if (sound) {
+        sound.unloadAsync();
+      }
+    };
+  }, [sound]);
+
+  // Audio playback functions
+  const playAudio = async (memo: VoiceMemo) => {
+    try {
+      // If already playing this memo, pause it
+      if (playingMemoId === memo.id && isPlaying) {
+        await sound?.pauseAsync();
+        setIsPlaying(false);
+        return;
+      }
+
+      // If playing different memo, stop and unload
+      if (sound && playingMemoId !== memo.id) {
+        await sound.unloadAsync();
+        setSound(null);
+      }
+
+      // If same memo but paused, resume
+      if (playingMemoId === memo.id && sound) {
+        await sound.playAsync();
+        setIsPlaying(true);
+        return;
+      }
+
+      // Load and play new audio
+      if (!memo.audioUri) {
+        Alert.alert('No Audio', 'This memo has no audio recording');
+        return;
+      }
+
+      const { sound: newSound } = await Audio.Sound.createAsync(
+        { uri: memo.audioUri },
+        { shouldPlay: true },
+        (status) => {
+          if (status.isLoaded && status.didJustFinish) {
+            setIsPlaying(false);
+            setPlayingMemoId(null);
+          }
+        }
+      );
+
+      setSound(newSound);
+      setPlayingMemoId(memo.id);
+      setIsPlaying(true);
+    } catch (error) {
+      console.error('Error playing audio:', error);
+      Alert.alert('Playback Error', 'Unable to play audio');
+    }
+  };
 
   const loadMemos = async () => {
     try {
@@ -125,6 +198,33 @@ export default function Notes() {
     }
   };
 
+  const toggleComplete = async (memo: VoiceMemo) => {
+    try {
+      const user = await AuthService.getCurrentUser();
+      if (!user) {
+        console.warn('No user logged in');
+        return;
+      }
+
+      let updatedMemo: VoiceMemo | null;
+      
+      if (memo.isCompleted) {
+        // Uncomplete the memo
+        updatedMemo = await VoiceMemoService.uncompleteMemo(memo.id, user.id);
+      } else {
+        // Complete the memo
+        updatedMemo = await VoiceMemoService.completeMemo(memo.id, user.id);
+      }
+
+      if (updatedMemo) {
+        // Update local state
+        setMemos(memos.map(m => m.id === memo.id ? updatedMemo! : m));
+      }
+    } catch (error) {
+      console.error('Error toggling memo completion:', error);
+    }
+  };
+
   const shareMemo = async (memo: VoiceMemo) => {
     try {
       // Create shareable text content
@@ -159,11 +259,11 @@ export default function Notes() {
           <View
             style={[
               styles.typeBadge,
-              { backgroundColor: TYPE_BADGES[item.type].color },
+              { backgroundColor: (TYPE_BADGES[item.type] || TYPE_BADGES.note).color },
             ]}
           >
             <Text style={styles.typeBadgeText}>
-              {TYPE_BADGES[item.type].icon}
+              {(TYPE_BADGES[item.type] || TYPE_BADGES.note).icon}
             </Text>
           </View>
         </View>
@@ -200,11 +300,18 @@ export default function Notes() {
         )}
       </View>
 
-      {/* Get Insight, Share, and Delete Actions */}
+      {/* Play, Get Insight, Complete, Share, and Delete Actions */}
       <View style={styles.memoActions}>
         <AnimatedActionButton
+          icon={playingMemoId === item.id && isPlaying ? "⏸" : "▶️"}
+          label={playingMemoId === item.id && isPlaying ? "Pause" : "Play"}
+          backgroundColor="#FF9500"
+          onPress={() => playAudio(item)}
+        />
+        
+        <AnimatedActionButton
           icon="💡"
-          label="Get Insight"
+          label="Insight"
           backgroundColor={COLORS.primary}
           onPress={() => {
             router.push({
@@ -215,9 +322,16 @@ export default function Notes() {
         />
         
         <AnimatedActionButton
+          icon={item.isCompleted ? "✓" : "☐"}
+          label={item.isCompleted ? "Done" : "Complete"}
+          backgroundColor={item.isCompleted ? "#34C759" : "#8E8E93"}
+          onPress={() => toggleComplete(item)}
+        />
+        
+        <AnimatedActionButton
           icon="📤"
           label="Share"
-          backgroundColor="#34C759"
+          backgroundColor="#007AFF"
           onPress={() => shareMemo(item)}
         />
         
@@ -228,6 +342,15 @@ export default function Notes() {
           onPress={() => deleteMemo(item.id)}
         />
       </View>
+
+      {/* Completion Badge */}
+      {item.isCompleted && item.completedAt && (
+        <View style={styles.completionBadge}>
+          <Text style={styles.completionBadgeText}>
+            ✓ Completed {formatRelativeTime(item.completedAt)}
+          </Text>
+        </View>
+      )}
     </View>
   );
 
@@ -538,6 +661,20 @@ const styles = StyleSheet.create({
     borderTopColor: COLORS.gray[100],
     backgroundColor: COLORS.gray[50],
     justifyContent: 'flex-end',
+  },
+  completionBadge: {
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#E8F5E9',
+    borderLeftWidth: 3,
+    borderLeftColor: '#34C759',
+    borderRadius: 6,
+  },
+  completionBadgeText: {
+    fontSize: 12,
+    color: '#2E7D32',
+    fontWeight: '600',
   },
   memoIconButton: {
     width: 40,

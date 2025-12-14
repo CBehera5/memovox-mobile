@@ -54,8 +54,15 @@ export class VoiceMemoService {
     audioData: Blob | Buffer
   ): Promise<string | null> {
     try {
+      console.log(' DEBUG: uploadAudio START');
+      console.log('🔴 DEBUG: audioUri:', audioUri);
+      console.log('🔴 DEBUG: audioData type:', audioData.constructor.name);
+      console.log('🔴 DEBUG: audioData size:', audioData instanceof Blob ? audioData.size : Buffer.byteLength(audioData as any));
+      
       const filename = `${userId}/${memoId}.m4a`;
+      console.log('🔴 DEBUG: upload filename:', filename);
 
+      console.log('🔴 DEBUG: Starting Supabase upload...');
       const { data, error } = await supabase.storage
         .from(this.BUCKET_NAME)
         .upload(filename, audioData, {
@@ -64,20 +71,25 @@ export class VoiceMemoService {
         });
 
       if (error) {
-        console.error('Error uploading audio:', error);
-        return null;
+        console.log('⚠️ Supabase upload unavailable, using local storage:', error.message);
+        // Fallback to local URI - this is expected behavior when offline or Supabase is unreachable
+        return audioUri;
       }
+
+      console.log('🔴 DEBUG: Upload successful, data:', data);
 
       // Get public URL
       const { data: publicData } = supabase.storage
         .from(this.BUCKET_NAME)
         .getPublicUrl(filename);
 
+      console.log('🔴 DEBUG: Public URL obtained:', publicData.publicUrl);
       console.log('Audio uploaded successfully:', publicData.publicUrl);
       return publicData.publicUrl;
     } catch (error) {
-      console.error('Error uploading audio:', error);
-      return null;
+      console.log('⚠️ Audio upload failed, using local storage instead');
+      // Return local URI as fallback - app will work with local files
+      return audioUri;
     }
   }
 
@@ -264,6 +276,185 @@ export class VoiceMemoService {
     } catch (error) {
       console.error('Error deleting memo:', error);
       return false;
+    }
+  }
+
+  /**
+   * Mark a memo as completed
+   */
+  async completeMemo(memoId: string, userId: string): Promise<VoiceMemo | null> {
+    try {
+      // For development mode with local storage
+      const StorageService = require('./StorageService').default;
+      const memos = await StorageService.getVoiceMemos();
+      
+      const memo = memos.find((m: VoiceMemo) => m.id === memoId && m.userId === userId);
+      
+      if (!memo) {
+        console.error('Memo not found:', memoId);
+        return null;
+      }
+      
+      // Update memo with completion data
+      memo.isCompleted = true;
+      memo.completedAt = new Date().toISOString();
+      memo.updatedAt = new Date().toISOString();
+      
+      // Save back to storage
+      await StorageService.saveVoiceMemos(memos);
+      
+      console.log('Memo marked as completed:', memoId);
+      return memo;
+      
+      // PRODUCTION: Supabase database update (commented out for development)
+      /*
+      const { data, error } = await supabase
+        .from(this.TABLE_NAME)
+        .update({
+          is_completed: true,
+          completed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', memoId)
+        .eq('user_id', userId)
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error completing memo:', error);
+        return null;
+      }
+
+      return data ? {
+        id: data.id,
+        userId: data.user_id,
+        audioUri: data.audio_url,
+        transcription: data.transcription,
+        category: data.category,
+        type: data.type,
+        title: data.title,
+        duration: data.duration,
+        createdAt: data.created_at,
+        updatedAt: data.updated_at,
+        isCompleted: data.is_completed,
+        completedAt: data.completed_at,
+        linkedActions: data.linked_actions,
+        aiAnalysis: data.ai_analysis,
+        metadata: data.metadata,
+      } : null;
+      */
+    } catch (error) {
+      console.error('Error completing memo:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Unmark a memo as completed (toggle back to incomplete)
+   */
+  async uncompleteMemo(memoId: string, userId: string): Promise<VoiceMemo | null> {
+    try {
+      // For development mode with local storage
+      const StorageService = require('./StorageService').default;
+      const memos = await StorageService.getVoiceMemos();
+      
+      const memo = memos.find((m: VoiceMemo) => m.id === memoId && m.userId === userId);
+      
+      if (!memo) {
+        console.error('Memo not found:', memoId);
+        return null;
+      }
+      
+      // Update memo to remove completion data
+      memo.isCompleted = false;
+      memo.completedAt = undefined;
+      memo.updatedAt = new Date().toISOString();
+      
+      // Save back to storage
+      await StorageService.saveVoiceMemos(memos);
+      
+      console.log('Memo marked as incomplete:', memoId);
+      return memo;
+      
+      // PRODUCTION: Supabase database update (commented out for development)
+      /*
+      const { data, error } = await supabase
+        .from(this.TABLE_NAME)
+        .update({
+          is_completed: false,
+          completed_at: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', memoId)
+        .eq('user_id', userId)
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error uncompleting memo:', error);
+        return null;
+      }
+
+      return data ? {
+        id: data.id,
+        userId: data.user_id,
+        audioUri: data.audio_url,
+        transcription: data.transcription,
+        category: data.category,
+        type: data.type,
+        title: data.title,
+        duration: data.duration,
+        createdAt: data.created_at,
+        updatedAt: data.updated_at,
+        isCompleted: data.is_completed,
+        completedAt: data.completed_at,
+        linkedActions: data.linked_actions,
+        aiAnalysis: data.ai_analysis,
+        metadata: data.metadata,
+      } : null;
+      */
+    } catch (error) {
+      console.error('Error uncompleting memo:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Link an action to a memo
+   */
+  async linkActionToMemo(memoId: string, userId: string, actionId: string): Promise<VoiceMemo | null> {
+    try {
+      // For development mode with local storage
+      const StorageService = require('./StorageService').default;
+      const memos = await StorageService.getVoiceMemos();
+      
+      const memo = memos.find((m: VoiceMemo) => m.id === memoId && m.userId === userId);
+      
+      if (!memo) {
+        console.error('Memo not found:', memoId);
+        return null;
+      }
+      
+      // Initialize linkedActions if not exists
+      if (!memo.linkedActions) {
+        memo.linkedActions = [];
+      }
+      
+      // Add action ID if not already linked
+      if (!memo.linkedActions.includes(actionId)) {
+        memo.linkedActions.push(actionId);
+        memo.updatedAt = new Date().toISOString();
+        
+        // Save back to storage
+        await StorageService.saveVoiceMemos(memos);
+        
+        console.log('Action linked to memo:', actionId, '→', memoId);
+      }
+      
+      return memo;
+    } catch (error) {
+      console.error('Error linking action to memo:', error);
+      return null;
     }
   }
 

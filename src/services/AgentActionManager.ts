@@ -118,8 +118,13 @@ class AgentActionManager {
               result,
             };
 
-            // Save action item
-            await this.saveActionItem(actionItem);
+            // Save action item using AgentService format (same storage location)
+            if (context?.userId) {
+              await this.saveActionItem(actionItem, context.userId);
+            } else {
+              console.warn('No userId in context, action may not appear on home page');
+              await this.saveActionItem(actionItem);
+            }
 
             // Push to action tracking
             createdActions.push(actionItem);
@@ -220,13 +225,39 @@ Returns:
 
   /**
    * Save action item to storage
+   * If userId is provided, saves to AgentService format (memovox_agent_actions_{userId})
+   * Otherwise falls back to legacy format (memovox_action_items)
    */
-  private async saveActionItem(actionItem: ActionItem): Promise<void> {
+  private async saveActionItem(actionItem: ActionItem, userId?: string): Promise<void> {
     try {
-      const actions = await StorageService.getActionItems?.() || [];
-      actions.push(actionItem);
-      await StorageService.saveActionItems?.(actions);
-      console.log('Action item saved:', actionItem.id);
+      if (userId) {
+        // Use AgentService format for consistency
+        const key = `memovox_agent_actions_${userId}`;
+        const existingData = await StorageService.getItem(key);
+        const actions = existingData ? JSON.parse(existingData) : [];
+        
+        // Convert ActionItem to AgentAction format
+        const agentAction = {
+          id: actionItem.id,
+          title: actionItem.title,
+          description: actionItem.description,
+          dueDate: actionItem.dueTime.toISOString(),
+          priority: actionItem.priority,
+          status: actionItem.status,
+          type: actionItem.type,
+          memoId: actionItem.memoId,
+        };
+        
+        actions.push(agentAction);
+        await StorageService.setItem(key, JSON.stringify(actions));
+        console.log('Action saved to AgentService format:', actionItem.id);
+      } else {
+        // Legacy fallback
+        const actions = await StorageService.getActionItems?.() || [];
+        actions.push(actionItem);
+        await StorageService.saveActionItems?.(actions);
+        console.log('Action item saved (legacy):', actionItem.id);
+      }
     } catch (error) {
       console.error('Error saving action item:', error);
     }
