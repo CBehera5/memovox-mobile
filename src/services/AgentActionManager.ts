@@ -10,6 +10,7 @@ import { Groq } from 'groq-sdk';
 import StorageService from './StorageService';
 import ActionService, { ActionRequest, ActionResult } from './ActionService';
 import LanguageService from './LanguageService';
+import { GROQ_API_KEY } from '../config/env';
 
 export interface ActionItem {
   id: string;
@@ -35,7 +36,7 @@ export interface ActionStats {
 
 class AgentActionManager {
   private groqClient: Groq | null = null;
-  private apiKey: string = '***REMOVED***';
+  private apiKey: string = GROQ_API_KEY;
   private actionListeners: Set<(actions: ActionItem[]) => void> = new Set();
 
   constructor() {

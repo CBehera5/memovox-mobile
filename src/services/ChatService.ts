@@ -3,6 +3,7 @@
 import { Platform } from 'react-native';
 import StorageService from './StorageService';
 import AIService from './AIService';
+import { GROQ_API_KEY } from '../config/env';
 
 // Conditionally import expo-speech only on native platforms
 let Speech: any = null;
@@ -34,7 +35,7 @@ export interface ChatSession {
 
 class ChatService {
   private currentSession: ChatSession | null = null;
-  private apiKey: string = '***REMOVED***';
+  private apiKey: string = GROQ_API_KEY;
   private apiEndpoint: string = 'https://api.groq.com/openai/v1/chat/completions';
 
   constructor() {

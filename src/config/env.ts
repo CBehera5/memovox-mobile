@@ -22,15 +22,19 @@ if (!GROQ_API_KEY) {
   }
 }
 
-// Final fallback - use the key directly (will be in the built APK but that's OK for now)
+// Final fallback - load from process.env
 if (!GROQ_API_KEY) {
-  GROQ_API_KEY = '***REMOVED***';
-  console.log('Using fallback API key');
+  GROQ_API_KEY = process.env.EXPO_PUBLIC_GROQ_API_KEY || '';
+  if (!GROQ_API_KEY) {
+    console.error('⚠️ GROQ_API_KEY not found! Please set EXPO_PUBLIC_GROQ_API_KEY in .env file');
+  }
 }
 
 export const Config = {
   GROQ_API_KEY,
 };
+
+export { GROQ_API_KEY };
 
 // Log configuration status (without exposing key)
 console.log('Config loaded:', {

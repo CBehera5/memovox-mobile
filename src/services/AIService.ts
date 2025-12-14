@@ -4,6 +4,7 @@ import { VoiceMemo, MemoCategory, MemoType, AIAnalysis, AIServiceConfig } from '
 import StorageService from './StorageService';
 import { AI_MODELS } from '../constants';
 import Groq from 'groq-sdk';
+import { GROQ_API_KEY } from '../config/env';
 
 interface TranscriptionResult {
   transcription: string;
@@ -17,7 +18,7 @@ interface TranscriptionResult {
 class AIService {
   private config: AIServiceConfig = {
     provider: 'groq',
-    apiKey: '***REMOVED***',
+    apiKey: GROQ_API_KEY,
   };
   private groqClient: Groq | null = null;
 

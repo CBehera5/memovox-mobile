@@ -4,6 +4,7 @@ import { AgentAction, AgentSuggestion, VoiceMemo, CompletionStats } from '../typ
 import StorageService from './StorageService';
 import AIService from './AIService';
 import Groq from 'groq-sdk';
+import { GROQ_API_KEY } from '../config/env';
 
 class AgentService {
   private groqClient: Groq | null = null;
@@ -13,7 +14,7 @@ class AgentService {
     // Initialize Groq client with API key
     try {
       this.groqClient = new Groq({
-        apiKey: '***REMOVED***',
+        apiKey: GROQ_API_KEY,
         dangerouslyAllowBrowser: true,
       });
     } catch (error) {

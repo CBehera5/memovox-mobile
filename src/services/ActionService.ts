@@ -4,6 +4,7 @@ import { Groq } from 'groq-sdk';
 import * as Notifications from 'expo-notifications';
 import StorageService from './StorageService';
 import LanguageService, { SupportedLanguage } from './LanguageService';
+import { GROQ_API_KEY } from '../config/env';
 
 export interface ActionRequest {
   type: 'reminder' | 'alarm' | 'notification' | 'calendar' | 'task' | null;
@@ -23,7 +24,7 @@ export interface ActionResult {
 
 class ActionService {
   private groqClient: Groq | null = null;
-  private apiKey: string = '***REMOVED***';
+  private apiKey: string = GROQ_API_KEY;
 
   constructor() {
     this.initializeGroq();
