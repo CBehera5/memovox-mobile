@@ -175,6 +175,17 @@ Wrap pure functional components with `React.memo` to prevent unnecessary re-rend
 - `TaskMenu`
 - `TrialBanner`
 
+**Important**: When using React.memo, ensure parent components memoize callback props with `useCallback` to maintain referential equality:
+```typescript
+// In parent component
+const handleItemPress = useCallback((item) => {
+  // handle press
+}, []);
+
+// Pass to memoized child
+<MemoizedComponent onItemPress={handleItemPress} />
+```
+
 ### 5. Implement Virtual Scrolling
 For very large lists (>500 items), consider implementing virtual scrolling or pagination.
 

@@ -17,7 +17,8 @@ interface ActionItemsWidgetProps {
   onItemPress?: (action: ActionItem) => void;
 }
 
-// PERFORMANCE IMPROVEMENT: Memoize component to prevent unnecessary re-renders
+// PERFORMANCE IMPROVEMENT: Memoize component with custom comparison to ensure proper memoization
+// Only re-render if maxItems changes or if actions data changes
 export const ActionItemsWidget = React.memo<ActionItemsWidgetProps>(function ActionItemsWidget({
   maxItems = 5,
   onItemPress,
