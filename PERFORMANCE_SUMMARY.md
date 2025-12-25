@@ -45,7 +45,7 @@ removeClippedSubviews={true}      // Remove views outside viewport
 maxToRenderPerBatch={10}           // Batch rendering
 updateCellsBatchingPeriod={50}    // Update frequency
 initialNumToRender={10}           // Initial items to render
-windowSize={10}                    // Render window size
+windowSize={21}                    // Optimal buffer size
 ```
 
 **Impact**: 50-60% smoother scrolling, 20-30% reduction in memory usage

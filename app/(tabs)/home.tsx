@@ -177,9 +177,9 @@ export default function Home() {
     } catch (error) {
       console.error('Error loading data:', error);
     }
-  }, []);
+  }, [loadAgentData, calculateUrgency]);
 
-  const loadAgentData = async (userId: string) => {
+  const loadAgentData = useCallback(async (userId: string) => {
     try {
       // PERFORMANCE IMPROVEMENT: Parallelize independent API calls
       const [today, upcoming, stats, pending, suggestions] = await Promise.all([
@@ -215,9 +215,9 @@ export default function Home() {
     } catch (error) {
       console.error('Error loading agent data:', error);
     }
-  };
+  }, []);
 
-  const calculateUrgency = (allMemos: VoiceMemo[]): string => {
+  const calculateUrgency = useCallback((allMemos: VoiceMemo[]): string => {
     // Count recent action items (events/reminders from past week)
     const oneWeekAgo = new Date();
     oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
@@ -233,13 +233,13 @@ export default function Home() {
     if (pendingItems >= 3) return '🟡 Medium - Several tasks need attention';
     if (pendingItems >= 1) return '🟢 Low - Few action items noted';
     return '⚪ Clear - No pending action items';
-  };
+  }, []);
 
-  const getActionItems = (allMemos: VoiceMemo[]): VoiceMemo[] => {
+  const getActionItems = useCallback((allMemos: VoiceMemo[]): VoiceMemo[] => {
     // Get all memos sorted by date, most recent first
     return allMemos
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  };
+  }, []);
 
   // PERFORMANCE IMPROVEMENT: Memoize expensive computations
   const pendingActionsCount = useMemo(() => {
