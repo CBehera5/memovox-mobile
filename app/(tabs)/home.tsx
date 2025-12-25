@@ -289,31 +289,34 @@ export default function Home() {
     return { todayCount: todayC, overdueCount: overdueC };
   }, [allActions]);
 
-  const onRefresh = async () => {
+  // PERFORMANCE IMPROVEMENT: Wrap callbacks with useCallback
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadData();
     setRefreshing(false);
-  };
+  }, []);
 
-  const deleteMemo = async (memoId: string) => {
+  const deleteMemo = useCallback(async (memoId: string) => {
     try {
       if (!user) {
         console.warn('No user logged in');
         return;
       }
       await VoiceMemoService.deleteMemo(memoId, user.id);
-      // Remove from local state
-      setMemos(memos.filter(memo => memo.id !== memoId));
+      // Remove from local state using functional update
+      setMemos(prev => prev.filter(memo => memo.id !== memoId));
       // Recalculate urgency
-      const updatedMemos = memos.filter(memo => memo.id !== memoId);
-      const urgency = calculateUrgency(updatedMemos);
-      setUrgencyLevel(urgency);
+      setMemos(prev => {
+        const urgency = calculateUrgency(prev);
+        setUrgencyLevel(urgency);
+        return prev;
+      });
     } catch (error) {
       console.error('Error deleting memo:', error);
     }
-  };
+  }, [user]);
 
-  const saveMemoForLater = async (memoId: string, title: string) => {
+  const saveMemoForLater = useCallback(async (memoId: string, title: string) => {
     try {
       const newSavedMemos = new Set(savedMemos);
       if (newSavedMemos.has(memoId)) {
@@ -321,8 +324,8 @@ export default function Home() {
         Alert.alert('Removed', `"${title}" removed from saved items`);
       } else {
         newSavedMemos.add(memoId);
-        // Remove from home page display
-        setMemos(memos.filter(memo => memo.id !== memoId));
+        // Remove from home page display using functional update
+        setMemos(prev => prev.filter(memo => memo.id !== memoId));
         Alert.alert('Saved!', `"${title}" saved for later. It's now only visible in Notes tab.`);
       }
       setSavedMemos(newSavedMemos);
@@ -333,9 +336,9 @@ export default function Home() {
     } catch (error) {
       console.error('Error saving memo:', error);
     }
-  };
+  }, [savedMemos, user]);
 
-  const shareTaskConversation = async (action: AgentAction) => {
+  const shareTaskConversation = useCallback(async (action: AgentAction) => {
     try {
       const conversationText = `📋 Task: ${action.title}\n\n` +
         `Priority: ${action.priority?.toUpperCase()}\n` +
@@ -353,9 +356,9 @@ export default function Home() {
     } catch (error) {
       console.error('Error sharing task:', error);
     }
-  };
+  }, []);
 
-  const copyTaskToClipboard = async (action: AgentAction) => {
+  const copyTaskToClipboard = useCallback(async (action: AgentAction) => {
     try {
       const conversationText = `📋 ${action.title}\n` +
         `Priority: ${action.priority?.toUpperCase()} | Status: ${action.status}\n` +
@@ -366,9 +369,9 @@ export default function Home() {
     } catch (error) {
       console.error('Error copying task:', error);
     }
-  };
+  }, []);
 
-  const toggleComplete = async (memo: VoiceMemo) => {
+  const toggleComplete = useCallback(async (memo: VoiceMemo) => {
     try {
       if (!user) {
         console.warn('No user logged in');
@@ -386,16 +389,16 @@ export default function Home() {
       }
 
       if (updatedMemo) {
-        // Update local state
-        setMemos(memos.map(m => m.id === memo.id ? updatedMemo! : m));
+        // Update local state using functional update
+        setMemos(prev => prev.map(m => m.id === memo.id ? updatedMemo! : m));
         Alert.alert('✓ Updated', memo.isCompleted ? 'Memo marked as incomplete' : 'Memo marked as complete');
       }
     } catch (error) {
       console.error('Error toggling memo completion:', error);
     }
-  };
+  }, [user]);
 
-  const shareMemo = async (memo: VoiceMemo) => {
+  const shareMemo = useCallback(async (memo: VoiceMemo) => {
     try {
       // Create shareable text content
       const shareText = `📝 ${memo.title || 'Voice Memo'}\n\n` +
@@ -425,7 +428,7 @@ export default function Home() {
       console.error('Error sharing memo:', error);
       Alert.alert('Share Failed', 'Unable to share memo. Please try again.');
     }
-  };
+  }, []);
 
   const renderCarouselCard = (index: number) => {
     if (index === 0) {
