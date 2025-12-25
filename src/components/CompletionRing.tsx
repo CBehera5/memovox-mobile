@@ -9,7 +9,8 @@ interface CompletionRingProps {
   strokeWidth?: number;
 }
 
-export default function CompletionRing({ 
+// PERFORMANCE IMPROVEMENT: Memoize component to prevent unnecessary re-renders
+const CompletionRing = React.memo(function CompletionRing({ 
   percentage, 
   size = 120, 
   strokeWidth = 12 
@@ -71,7 +72,9 @@ export default function CompletionRing({
       </View>
     </View>
   );
-}
+});
+
+export default CompletionRing;
 
 const styles = StyleSheet.create({
   container: {

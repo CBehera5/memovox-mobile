@@ -1,6 +1,6 @@
 // src/components/ActionItemsWidget.tsx
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -17,10 +17,11 @@ interface ActionItemsWidgetProps {
   onItemPress?: (action: ActionItem) => void;
 }
 
-export const ActionItemsWidget: React.FC<ActionItemsWidgetProps> = ({
+// PERFORMANCE IMPROVEMENT: Memoize component to prevent unnecessary re-renders
+export const ActionItemsWidget = React.memo<ActionItemsWidgetProps>(function ActionItemsWidget({
   maxItems = 5,
   onItemPress,
-}) => {
+}) {
   const [actions, setActions] = useState<ActionItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -50,7 +51,8 @@ export const ActionItemsWidget: React.FC<ActionItemsWidgetProps> = ({
     };
   }, [maxItems]);
 
-  const getIcon = (type: string) => {
+  // PERFORMANCE IMPROVEMENT: Memoize helper functions
+  const getIcon = useCallback((type: string) => {
     switch (type) {
       case 'reminder':
         return '🔔';
@@ -65,9 +67,9 @@ export const ActionItemsWidget: React.FC<ActionItemsWidgetProps> = ({
       default:
         return '•';
     }
-  };
+  }, []);
 
-  const getPriorityColor = (priority: string) => {
+  const getPriorityColor = useCallback((priority: string) => {
     switch (priority) {
       case 'high':
         return '#FF3B30';
@@ -78,9 +80,9 @@ export const ActionItemsWidget: React.FC<ActionItemsWidgetProps> = ({
       default:
         return '#8E8E93';
     }
-  };
+  }, []);
 
-  const formatDueTime = (dueTime: Date | string) => {
+  const formatDueTime = useCallback((dueTime: Date | string) => {
     const date = typeof dueTime === 'string' ? new Date(dueTime) : dueTime;
     const now = new Date();
     const diffMs = date.getTime() - now.getTime();
@@ -95,12 +97,12 @@ export const ActionItemsWidget: React.FC<ActionItemsWidgetProps> = ({
     } else {
       return date.toLocaleDateString();
     }
-  };
+  }, []);
 
-  const handleCompleteAction = async (actionId: string, e: any) => {
+  const handleCompleteAction = useCallback(async (actionId: string, e: any) => {
     e.stopPropagation();
     await AgentActionManager.completeAction(actionId);
-  };
+  }, []);
 
   if (loading) {
     return (
@@ -167,7 +169,7 @@ export const ActionItemsWidget: React.FC<ActionItemsWidgetProps> = ({
       </ScrollView>
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {
