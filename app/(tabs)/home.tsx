@@ -304,17 +304,20 @@ export default function Home() {
         return;
       }
       await VoiceMemoService.deleteMemo(memoId, user.id);
-      // Remove from local state and recalculate urgency using functional update
-      setMemos(prev => {
-        const updated = prev.filter(memo => memo.id !== memoId);
-        const urgency = calculateUrgency(updated);
-        setUrgencyLevel(urgency);
-        return updated;
-      });
+      // Remove from local state using functional update
+      setMemos(prev => prev.filter(memo => memo.id !== memoId));
     } catch (error) {
       console.error('Error deleting memo:', error);
     }
   }, [user]);
+
+  // PERFORMANCE IMPROVEMENT: Recalculate urgency when memos change
+  useEffect(() => {
+    if (memos.length > 0) {
+      const urgency = calculateUrgency(memos);
+      setUrgencyLevel(urgency);
+    }
+  }, [memos]);
 
   const saveMemoForLater = useCallback(async (memoId: string, title: string) => {
     try {

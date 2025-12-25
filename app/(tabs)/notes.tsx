@@ -505,7 +505,7 @@ export default function Notes() {
           maxToRenderPerBatch={10}
           updateCellsBatchingPeriod={50}
           initialNumToRender={10}
-          windowSize={10}
+          windowSize={21}  // Optimal range is 21-100, ensures proper buffer of rendered items
         />
       )}
     </SafeAreaView>
