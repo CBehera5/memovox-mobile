@@ -142,7 +142,8 @@ export default function Home() {
     }
   };
 
-  const loadData = async () => {
+  // PERFORMANCE IMPROVEMENT: Wrap loadData with useCallback to prevent recreating on every render
+  const loadData = useCallback(async () => {
     try {
       // Get current user
       const userData = await AuthService.getCurrentUser();
@@ -176,7 +177,7 @@ export default function Home() {
     } catch (error) {
       console.error('Error loading data:', error);
     }
-  };
+  }, []);
 
   const loadAgentData = async (userId: string) => {
     try {
@@ -294,7 +295,7 @@ export default function Home() {
     setRefreshing(true);
     await loadData();
     setRefreshing(false);
-  }, []);
+  }, [loadData]);
 
   const deleteMemo = useCallback(async (memoId: string) => {
     try {
@@ -303,13 +304,12 @@ export default function Home() {
         return;
       }
       await VoiceMemoService.deleteMemo(memoId, user.id);
-      // Remove from local state using functional update
-      setMemos(prev => prev.filter(memo => memo.id !== memoId));
-      // Recalculate urgency
+      // Remove from local state and recalculate urgency using functional update
       setMemos(prev => {
-        const urgency = calculateUrgency(prev);
+        const updated = prev.filter(memo => memo.id !== memoId);
+        const urgency = calculateUrgency(updated);
         setUrgencyLevel(urgency);
-        return prev;
+        return updated;
       });
     } catch (error) {
       console.error('Error deleting memo:', error);
