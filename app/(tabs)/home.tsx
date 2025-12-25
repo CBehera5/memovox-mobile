@@ -1,6 +1,6 @@
 // app/(tabs)/home.tsx
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
@@ -154,18 +154,17 @@ export default function Home() {
       }
       setUser(userData);
 
-      // Get memos from Supabase
-      const memosData = await VoiceMemoService.getUserMemos(userData.id);
+      // PERFORMANCE IMPROVEMENT: Parallelize independent API calls
+      const [memosData, savedMemoIds, personaData] = await Promise.all([
+        VoiceMemoService.getUserMemos(userData.id),
+        StorageService.getSavedMemos(userData.id),
+        StorageService.getUserPersona(),
+      ]);
+
       const sorted = sortByDate(memosData);
       console.log('Loaded memos from Supabase:', memosData.length);
       setMemos(sorted);
-
-      // Load saved memos
-      const savedMemoIds = await StorageService.getSavedMemos(userData.id);
       setSavedMemos(new Set(savedMemoIds));
-
-      // Load persona
-      const personaData = await StorageService.getUserPersona();
       setPersona(personaData);
 
       // Calculate urgency level based on memos
@@ -181,20 +180,20 @@ export default function Home() {
 
   const loadAgentData = async (userId: string) => {
     try {
-      // Get today's actions
-      const today = await AgentService.getTodayActions(userId);
+      // PERFORMANCE IMPROVEMENT: Parallelize independent API calls
+      const [today, upcoming, stats, pending, suggestions] = await Promise.all([
+        AgentService.getTodayActions(userId),
+        AgentService.getUpcomingActions(userId, 7),
+        AgentService.getCompletionStats(userId),
+        AgentService.getPendingActions(userId),
+        AgentService.getSmartSuggestions(userId),
+      ]);
+
       setTodayActions(today);
-
-      // Get upcoming actions (next 7 days)
-      const upcoming = await AgentService.getUpcomingActions(userId, 7);
       setUpcomingActions(upcoming);
-
-      // Get completion statistics
-      const stats = await AgentService.getCompletionStats(userId);
       setCompletionStats(stats);
 
-      // Get ALL pending actions sorted by priority and date
-      const pending = await AgentService.getPendingActions(userId);
+      // Sort pending actions by priority and date
       const sortedActions = pending.sort((a, b) => {
         // First sort by due date
         if (a.dueDate && b.dueDate) {
@@ -211,9 +210,6 @@ export default function Home() {
         return bPriority - aPriority;
       });
       setAllActions(sortedActions);
-
-      // Get smart suggestions (old/unacted tasks)
-      const suggestions = await AgentService.getSmartSuggestions(userId);
       setSmartSuggestions(suggestions.slice(0, 3)); // Show top 3
     } catch (error) {
       console.error('Error loading agent data:', error);
@@ -243,6 +239,55 @@ export default function Home() {
     return allMemos
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   };
+
+  // PERFORMANCE IMPROVEMENT: Memoize expensive computations
+  const pendingActionsCount = useMemo(() => {
+    return allActions.filter(action => action.status === 'pending').length;
+  }, [allActions]);
+
+  // PERFORMANCE IMPROVEMENT: Memoize filtered and sorted pending actions
+  const sortedPendingActions = useMemo(() => {
+    return allActions
+      .filter(action => action.status === 'pending')
+      .sort((a, b) => {
+        // Sort by priority: high > medium > low
+        const priorityOrder: Record<string, number> = { high: 3, medium: 2, low: 1 };
+        const aPriority = priorityOrder[a.priority] || 1;
+        const bPriority = priorityOrder[b.priority] || 1;
+        if (bPriority !== aPriority) return bPriority - aPriority;
+        // Then by due date
+        if (a.dueDate && b.dueDate) {
+          return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+        }
+        return 0;
+      });
+  }, [allActions]);
+
+  // PERFORMANCE IMPROVEMENT: Memoize today and overdue actions count
+  const { todayCount, overdueCount } = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    let todayC = 0;
+    let overdueC = 0;
+    
+    for (const action of allActions) {
+      if (!action.dueDate || action.status !== 'pending') continue;
+      
+      const dueDate = new Date(action.dueDate);
+      dueDate.setHours(0, 0, 0, 0);
+      const dueTime = dueDate.getTime();
+      const todayTime = today.getTime();
+      
+      if (dueTime === todayTime) {
+        todayC++;
+      } else if (dueTime < todayTime) {
+        overdueC++;
+      }
+    }
+    
+    return { todayCount: todayC, overdueCount: overdueC };
+  }, [allActions]);
 
   const onRefresh = async () => {
     setRefreshing(true);

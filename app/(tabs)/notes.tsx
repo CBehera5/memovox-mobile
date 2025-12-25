@@ -1,6 +1,6 @@
 // app/(tabs)/notes.tsx
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
@@ -52,7 +52,6 @@ const ALL_TYPES: (MemoType | 'All')[] = ['All', 'event', 'reminder', 'note'];
 export default function Notes() {
   const router = useRouter();
   const [memos, setMemos] = useState<VoiceMemo[]>([]);
-  const [filteredMemos, setFilteredMemos] = useState<VoiceMemo[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<MemoCategory | 'All'>('All');
   const [selectedType, setSelectedType] = useState<MemoType | 'All'>('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -73,10 +72,6 @@ export default function Notes() {
       loadMemos();
     }, [])
   );
-
-  useEffect(() => {
-    filterMemos();
-  }, [memos, selectedCategory, selectedType, searchQuery]);
 
   // Cleanup audio on unmount
   useEffect(() => {
@@ -157,7 +152,8 @@ export default function Notes() {
     }
   };
 
-  const filterMemos = () => {
+  // PERFORMANCE IMPROVEMENT: Memoize filtered memos instead of using useEffect
+  const filteredMemos = useMemo(() => {
     let filtered = [...memos];
 
     // Filter by category
@@ -177,14 +173,14 @@ export default function Notes() {
         memo =>
           memo.transcription.toLowerCase().includes(query) ||
           memo.title?.toLowerCase().includes(query) ||
-          memo.aiAnalysis?.keywords.some(kw => kw.toLowerCase().includes(query))
+          memo.aiAnalysis?.keywords?.some(kw => kw.toLowerCase().includes(query))
       );
     }
 
-    setFilteredMemos(filtered);
-  };
+    return filtered;
+  }, [memos, selectedCategory, selectedType, searchQuery]);
 
-  const deleteMemo = async (memoId: string) => {
+  const deleteMemo = useCallback(async (memoId: string) => {
     try {
       const user = await AuthService.getCurrentUser();
       if (!user) {
@@ -193,13 +189,13 @@ export default function Notes() {
       }
       await VoiceMemoService.deleteMemo(memoId, user.id);
       // Remove from local state
-      setMemos(memos.filter(memo => memo.id !== memoId));
+      setMemos(prev => prev.filter(memo => memo.id !== memoId));
     } catch (error) {
       console.error('Error deleting memo:', error);
     }
-  };
+  }, []);
 
-  const toggleComplete = async (memo: VoiceMemo) => {
+  const toggleComplete = useCallback(async (memo: VoiceMemo) => {
     try {
       const user = await AuthService.getCurrentUser();
       if (!user) {
@@ -219,14 +215,14 @@ export default function Notes() {
 
       if (updatedMemo) {
         // Update local state
-        setMemos(memos.map(m => m.id === memo.id ? updatedMemo! : m));
+        setMemos(prev => prev.map(m => m.id === memo.id ? updatedMemo! : m));
       }
     } catch (error) {
       console.error('Error toggling memo completion:', error);
     }
-  };
+  }, []);
 
-  const shareMemo = async (memo: VoiceMemo) => {
+  const shareMemo = useCallback(async (memo: VoiceMemo) => {
     try {
       // Create shareable text content
       const shareText = `Check out my memo: "${memo.title || 'Untitled Memo'}"\n\n${memo.transcription.substring(0, 500)}${memo.transcription.length > 500 ? '...' : ''}`;
@@ -241,7 +237,7 @@ export default function Notes() {
       // Fallback: Show alert with message to copy
       Alert.alert('Share', 'Unable to share. Please copy the memo text manually.');
     }
-  };
+  }, []);
 
   const renderMemoItem = ({ item, index }: { item: VoiceMemo; index: number }) => (
     <TouchableOpacity
@@ -504,6 +500,12 @@ export default function Notes() {
           renderItem={renderMemoItem}
           keyExtractor={item => item.id}
           contentContainerStyle={styles.listContent}
+          // PERFORMANCE IMPROVEMENT: FlatList optimization props
+          removeClippedSubviews={true}
+          maxToRenderPerBatch={10}
+          updateCellsBatchingPeriod={50}
+          initialNumToRender={10}
+          windowSize={10}
         />
       )}
     </SafeAreaView>
