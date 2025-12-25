@@ -27,6 +27,7 @@ class ActionService {
   private apiKey: string = GROQ_API_KEY;
 
   constructor() {
+    if (__DEV__) console.log('🔧 ActionService: Initializing...');
     this.initializeGroq();
     this.configureNotifications();
   }
@@ -38,9 +39,9 @@ class ActionService {
           apiKey: this.apiKey,
           dangerouslyAllowBrowser: true,
         });
-        console.log('Action service Groq client initialized');
+        if (__DEV__) console.log('✅ ActionService: Groq client initialized');
       } catch (error) {
-        console.error('Error initializing action Groq client:', error);
+        console.error('❌ ActionService: Error initializing Groq client:', error);
         this.groqClient = null;
       }
     }

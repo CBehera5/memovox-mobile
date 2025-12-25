@@ -20,10 +20,11 @@ module.exports = function(api) {
       ],
       ['module:react-native-dotenv', {
         moduleName: '@env',
-        path: '.env',
+        path: '.env.local',  // Changed from .env to .env.local
         safe: false,
         allowUndefined: true,
-      }]
+      }],
+      // 'react-native-reanimated/plugin', // Temporarily disabled to test splash screen
     ]
   };
 };

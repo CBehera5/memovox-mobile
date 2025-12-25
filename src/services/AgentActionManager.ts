@@ -40,6 +40,7 @@ class AgentActionManager {
   private actionListeners: Set<(actions: ActionItem[]) => void> = new Set();
 
   constructor() {
+    if (__DEV__) console.log('🔧 AgentActionManager: Initializing...');
     this.initializeGroq();
   }
 
@@ -50,9 +51,9 @@ class AgentActionManager {
           apiKey: this.apiKey,
           dangerouslyAllowBrowser: true,
         });
-        console.log('AgentActionManager Groq client initialized');
+        if (__DEV__) console.log('✅ AgentActionManager: Groq client initialized');
       } catch (error) {
-        console.error('Error initializing AgentActionManager Groq client:', error);
+        console.error('❌ AgentActionManager: Error initializing Groq client:', error);
       }
     }
   }

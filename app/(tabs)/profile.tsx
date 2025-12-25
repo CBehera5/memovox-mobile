@@ -9,6 +9,7 @@ import {
   TouchableOpacity,
   Alert,
   Switch,
+  Share,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -19,6 +20,7 @@ import AIService from '../../src/services/AIService';
 import { User, UserPersona, AIServiceConfig } from '../../src/types';
 import { COLORS, GRADIENTS, CATEGORY_COLORS } from '../../src/constants';
 import { getInitials } from '../../src/utils';
+import GoogleCalendarSync from '../../src/components/GoogleCalendarSync';
 
 export default function Profile() {
   const router = useRouter();
@@ -117,6 +119,21 @@ export default function Profile() {
       'AI Provider Updated',
       `Switched to ${newProvider === 'mock' ? 'Mock Mode' : 'Anthropic API'}. ${newProvider === 'anthropic' ? 'You will need to configure your API key.' : ''}`
     );
+  };
+
+  const handleInviteFriends = async () => {
+    try {
+      const message = `🎯 Hey! I'm using MemoVox - an AI-powered voice assistant that turns my voice notes into actionable tasks, reminders, and insights.\n\n✨ Features I love:\n• Voice-to-text transcription\n• Smart task extraction\n• Calendar integration\n• AI-powered suggestions\n\nJoin me on MemoVox!\n\n📥 Download: https://memovox.app/download\n\n${user?.name ? `Invited by ${user.name}` : ''}`;
+
+      await Share.share({
+        message,
+        title: 'Join me on MemoVox! 🎯',
+      });
+    } catch (error) {
+      if (__DEV__) {
+        console.error('Error sharing invite:', error);
+      }
+    }
   };
 
   const formatDuration = (seconds: number): string => {
@@ -221,6 +238,25 @@ export default function Profile() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Settings</Text>
 
+          {/* Invite Friends - Prominent Feature */}
+          <TouchableOpacity 
+            style={styles.inviteButton}
+            onPress={handleInviteFriends}
+          >
+            <View style={styles.inviteButtonContent}>
+              <View style={styles.inviteIconContainer}>
+                <Text style={styles.inviteIcon}>🎯</Text>
+              </View>
+              <View style={styles.inviteTextContainer}>
+                <Text style={styles.inviteButtonTitle}>Invite Friends</Text>
+                <Text style={styles.inviteButtonSubtitle}>
+                  Share MemoVox and help your friends stay organized
+                </Text>
+              </View>
+              <Text style={styles.inviteButtonArrow}>→</Text>
+            </View>
+          </TouchableOpacity>
+
           <View style={styles.settingCard}>
             <View style={styles.settingRow}>
               <View style={styles.settingInfo}>
@@ -238,17 +274,56 @@ export default function Profile() {
             </View>
           </View>
 
-          <TouchableOpacity style={styles.settingButton}>
+          {/* Google Calendar Sync */}
+          <GoogleCalendarSync />
+
+          <TouchableOpacity 
+            style={styles.settingButton}
+            onPress={async () => {
+              try {
+                const result = await Share.share({
+                  title: 'Try MemoVox - AI Voice Memos',
+                  message: `🎙️ Hey! I'm using MemoVox to turn my voice memos into organized tasks with AI.\n\nIt's like having a personal assistant that:\n✨ Transcribes my thoughts instantly\n📋 Extracts tasks automatically\n🤖 Helps me plan with AI chat\n\nDownload it here: https://memovox.app\n\nJoin me and get productive! 🚀`,
+                });
+
+                if (result.action === Share.sharedAction) {
+                  if (result.activityType) {
+                    console.log('Shared via:', result.activityType);
+                  } else {
+                    console.log('Shared successfully');
+                  }
+                  Alert.alert('Thanks!', 'Thanks for spreading the word about MemoVox! 🎉');
+                }
+              } catch (error: any) {
+                console.error('Error sharing:', error);
+                Alert.alert('Error', 'Failed to share. Please try again.');
+              }
+            }}
+          >
+            <Text style={styles.settingButtonText}>📲 Invite Friends</Text>
+            <Text style={styles.settingButtonIcon}>→</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.settingButton}
+            onPress={() => router.push('/(tabs)/notifications')}
+          >
             <Text style={styles.settingButtonText}>Notification Settings</Text>
             <Text style={styles.settingButtonIcon}>→</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.settingButton}>
+          <TouchableOpacity 
+            style={styles.settingButton}
+            onPress={() => router.push('/(tabs)/privacy')}
+          >
             <Text style={styles.settingButtonText}>Privacy & Data</Text>
             <Text style={styles.settingButtonIcon}>→</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.settingButton}>
+          <TouchableOpacity 
+            style={styles.settingButton}
+            onPress={() => router.push('/(tabs)/about')}
+          >
             <Text style={styles.settingButtonText}>About MemoVox</Text>
             <Text style={styles.settingButtonIcon}>→</Text>
           </TouchableOpacity>
@@ -263,14 +338,6 @@ export default function Profile() {
             onPress={handleClearData}
           >
             <Text style={styles.dangerButtonText}>Clear All Data</Text>
-          </TouchableOpacity>
-
-          {/* Developer Section */}
-          <TouchableOpacity
-            style={styles.testButton}
-            onPress={() => router.push('/test-agent')}
-          >
-            <Text style={styles.testButtonText}>🧪 Test AgentService</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -440,6 +507,54 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     fontWeight: '600',
   },
+  inviteButton: {
+    backgroundColor: COLORS.white,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
+    borderWidth: 2,
+    borderColor: COLORS.primary + '20',
+  },
+  inviteButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  inviteIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.primary + '10',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  inviteIcon: {
+    fontSize: 24,
+  },
+  inviteTextContainer: {
+    flex: 1,
+  },
+  inviteButtonTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: COLORS.primary,
+    marginBottom: 4,
+  },
+  inviteButtonSubtitle: {
+    fontSize: 13,
+    color: COLORS.gray[600],
+    lineHeight: 18,
+  },
+  inviteButtonArrow: {
+    fontSize: 24,
+    color: COLORS.primary,
+    fontWeight: '600',
+  },
   settingCard: {
     backgroundColor: COLORS.white,
     borderRadius: 12,
@@ -499,18 +614,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   dangerButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: COLORS.white,
-  },
-  testButton: {
-    backgroundColor: '#667eea',
-    padding: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  testButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: COLORS.white,

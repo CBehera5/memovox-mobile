@@ -31,6 +31,7 @@ import {
 } from '../../src/constants';
 import { formatRelativeTime, sortByDate } from '../../src/utils';
 import AnimatedActionButton from '../../src/components/AnimatedActionButton';
+import TaskMenu from '../../src/components/TaskMenu';
 
 const ALL_CATEGORIES: (MemoCategory | 'All')[] = [
   'All',
@@ -242,8 +243,18 @@ export default function Notes() {
     }
   };
 
-  const renderMemoItem = ({ item }: { item: VoiceMemo }) => (
-    <View style={styles.memoCard}>
+  const renderMemoItem = ({ item, index }: { item: VoiceMemo; index: number }) => (
+    <TouchableOpacity
+      onPress={() => {
+        router.push({
+          pathname: '/(tabs)/chat',
+          params: { memoId: item.id }
+        });
+      }}
+      onLongPress={() => shareMemo(item)}
+      activeOpacity={0.7}
+    >
+      <View style={styles.memoCard}>
       <View style={styles.memoHeader}>
         <View style={styles.memoBadges}>
           <View
@@ -267,7 +278,49 @@ export default function Notes() {
             </Text>
           </View>
         </View>
-        <Text style={styles.memoTime}>{formatRelativeTime(item.createdAt)}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Text style={styles.memoTime}>{formatRelativeTime(item.createdAt)}</Text>
+          <TaskMenu
+            menuItems={[
+              {
+                icon: playingMemoId === item.id && isPlaying ? "⏸" : "▶️",
+                label: playingMemoId === item.id && isPlaying ? "Pause" : "Play",
+                backgroundColor: "#FF9500",
+                onPress: () => playAudio(item),
+              },
+              {
+                icon: '💡',
+                label: 'Insight',
+                backgroundColor: COLORS.primary,
+                onPress: () => {
+                  router.push({
+                    pathname: '/(tabs)/chat',
+                    params: { memoId: item.id }
+                  });
+                },
+              },
+              {
+                icon: item.isCompleted ? "✓" : "☐",
+                label: item.isCompleted ? "Done" : "Complete",
+                backgroundColor: item.isCompleted ? "#34C759" : "#8E8E93",
+                onPress: () => toggleComplete(item),
+              },
+              {
+                icon: '📤',
+                label: 'Share',
+                backgroundColor: '#007AFF',
+                onPress: () => shareMemo(item),
+              },
+              {
+                icon: '🗑️',
+                label: 'Delete',
+                backgroundColor: '#FF3B30',
+                destructive: true,
+                onPress: () => deleteMemo(item.id),
+              },
+            ]}
+          />
+        </View>
       </View>
 
       <Text style={styles.memoTitle} numberOfLines={1}>
@@ -300,49 +353,6 @@ export default function Notes() {
         )}
       </View>
 
-      {/* Play, Get Insight, Complete, Share, and Delete Actions */}
-      <View style={styles.memoActions}>
-        <AnimatedActionButton
-          icon={playingMemoId === item.id && isPlaying ? "⏸" : "▶️"}
-          label={playingMemoId === item.id && isPlaying ? "Pause" : "Play"}
-          backgroundColor="#FF9500"
-          onPress={() => playAudio(item)}
-        />
-        
-        <AnimatedActionButton
-          icon="💡"
-          label="Insight"
-          backgroundColor={COLORS.primary}
-          onPress={() => {
-            router.push({
-              pathname: '/(tabs)/chat',
-              params: { memoId: item.id }
-            });
-          }}
-        />
-        
-        <AnimatedActionButton
-          icon={item.isCompleted ? "✓" : "☐"}
-          label={item.isCompleted ? "Done" : "Complete"}
-          backgroundColor={item.isCompleted ? "#34C759" : "#8E8E93"}
-          onPress={() => toggleComplete(item)}
-        />
-        
-        <AnimatedActionButton
-          icon="📤"
-          label="Share"
-          backgroundColor="#007AFF"
-          onPress={() => shareMemo(item)}
-        />
-        
-        <AnimatedActionButton
-          icon="🗑️"
-          label="Delete"
-          backgroundColor="#FF3B30"
-          onPress={() => deleteMemo(item.id)}
-        />
-      </View>
-
       {/* Completion Badge */}
       {item.isCompleted && item.completedAt && (
         <View style={styles.completionBadge}>
@@ -352,6 +362,7 @@ export default function Notes() {
         </View>
       )}
     </View>
+    </TouchableOpacity>
   );
 
   return (
@@ -450,7 +461,11 @@ export default function Notes() {
       {/* Memos List */}
       {filteredMemos.length === 0 ? (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyIcon}>📭</Text>
+          <Text style={styles.emptyIcon}>
+            {searchQuery || selectedCategory !== 'All' || selectedType !== 'All'
+              ? '�'
+              : '📝'}
+          </Text>
           <Text style={styles.emptyText}>
             {searchQuery || selectedCategory !== 'All' || selectedType !== 'All'
               ? 'No memos found'
@@ -458,9 +473,30 @@ export default function Notes() {
           </Text>
           <Text style={styles.emptySubtext}>
             {searchQuery || selectedCategory !== 'All' || selectedType !== 'All'
-              ? 'Try adjusting your filters'
-              : 'Start recording to see your memos here'}
+              ? 'Try adjusting your filters or search terms'
+              : 'Record your first voice memo to see it here'}
           </Text>
+          
+          {/* Clear Filters Button or Record CTA */}
+          {(searchQuery || selectedCategory !== 'All' || selectedType !== 'All') ? (
+            <TouchableOpacity
+              style={styles.emptyStateButton}
+              onPress={() => {
+                setSearchQuery('');
+                setSelectedCategory('All');
+                setSelectedType('All');
+              }}
+            >
+              <Text style={styles.emptyStateButtonText}>Clear All Filters</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.emptyStateCTA}
+              onPress={() => router.push('/(tabs)/record')}
+            >
+              <Text style={styles.emptyStateCTAText}>🎤 Record Now</Text>
+            </TouchableOpacity>
+          )}
         </View>
       ) : (
         <FlatList
@@ -728,5 +764,34 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: COLORS.gray[500],
     textAlign: 'center',
+  },
+  emptyStateButton: {
+    backgroundColor: COLORS.gray[200],
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    marginTop: 16,
+  },
+  emptyStateButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.gray[700],
+  },
+  emptyStateCTA: {
+    backgroundColor: '#667eea',
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    borderRadius: 12,
+    marginTop: 20,
+    shadowColor: '#667eea',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  emptyStateCTAText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
   },
 });

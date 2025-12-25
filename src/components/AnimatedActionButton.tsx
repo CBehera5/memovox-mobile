@@ -134,9 +134,9 @@ export default function AnimatedActionButton({
       ]).start();
     }
 
-    // Show tooltip
-    setShowTooltip(true);
-    setTimeout(() => setShowTooltip(false), 1500);
+    // Don't show tooltip - removed as per user request
+    // setShowTooltip(true);
+    // setTimeout(() => setShowTooltip(false), 1500);
 
     // Execute the action
     onPress();

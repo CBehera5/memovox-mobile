@@ -9,13 +9,15 @@ interface SmartTaskCardProps {
   daysOld?: number;
   onPress?: () => void;
   onComplete?: () => void;
+  onInsight?: () => void; // NEW: Get AI insights for this task
 }
 
 export default function SmartTaskCard({ 
   action, 
   daysOld,
   onPress, 
-  onComplete 
+  onComplete,
+  onInsight // NEW
 }: SmartTaskCardProps) {
   const getTypeIcon = () => {
     switch (action.type) {
@@ -121,14 +123,25 @@ export default function SmartTaskCard({
           )}
         </View>
 
-        {action.status !== 'completed' && onComplete && (
-          <TouchableOpacity 
-            style={styles.completeButton}
-            onPress={onComplete}
-          >
-            <Text style={styles.completeButtonText}>✓ Complete</Text>
-          </TouchableOpacity>
-        )}
+        <View style={styles.actionButtons}>
+          {onInsight && action.status !== 'completed' && (
+            <TouchableOpacity 
+              style={styles.insightButton}
+              onPress={onInsight}
+            >
+              <Text style={styles.insightButtonText}>💡 Ask AI</Text>
+            </TouchableOpacity>
+          )}
+          
+          {action.status !== 'completed' && onComplete && (
+            <TouchableOpacity 
+              style={styles.completeButton}
+              onPress={onComplete}
+            >
+              <Text style={styles.completeButtonText}>✓ Complete</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
     </TouchableOpacity>
   );
@@ -251,6 +264,21 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#F57C00',
     fontWeight: '600',
+  },
+  actionButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  insightButton: {
+    backgroundColor: '#9C27B0',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  insightButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.white,
   },
   completeButton: {
     backgroundColor: COLORS.primary,

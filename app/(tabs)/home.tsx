@@ -32,6 +32,9 @@ import CalendarWidget from '../../src/components/CalendarWidget';
 import SmartTaskCard from '../../src/components/SmartTaskCard';
 import AnimatedIconButton from '../../src/components/AnimatedIconButton';
 import AnimatedActionButton from '../../src/components/AnimatedActionButton';
+import TaskMenu from '../../src/components/TaskMenu';
+import TrialBanner from '../../src/components/TrialBanner';
+import GoogleCalendarSync from '../../src/components/GoogleCalendarSync';
 
 const { width } = Dimensions.get('window');
 
@@ -498,14 +501,178 @@ export default function Home() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        {/* Header */}
+        {/* Trial Banner */}
+        <TrialBanner />
+
+        {/* Header with Icons */}
         <LinearGradient colors={GRADIENTS.primary as any} style={styles.header}>
-          <Text style={styles.greeting}>Hello, {user?.name || 'there'}! 👋</Text>
-          <Text style={styles.subtitle}>
-            What would you like to capture today?
-          </Text>
+          <View style={styles.headerContent}>
+            <View style={styles.headerLeft}>
+              <Text style={styles.greeting}>Hello, {user?.name?.split(' ')[0] || 'there'}! 👋</Text>
+              <Text style={styles.subtitle}>
+                What would you like to capture today?
+              </Text>
+            </View>
+            
+            <View style={styles.headerIcons}>
+              {/* Notifications Icon - Shows today's action items count */}
+              <TouchableOpacity 
+                style={styles.headerIconButton}
+                onPress={() => {
+                  // Filter actions for today and overdue
+                  const today = new Date();
+                  today.setHours(0, 0, 0, 0);
+                  
+                  const todayActions = allActions.filter(action => {
+                    if (!action.dueDate) return false;
+                    const dueDate = new Date(action.dueDate);
+                    dueDate.setHours(0, 0, 0, 0);
+                    return dueDate.getTime() === today.getTime();
+                  });
+                  
+                  const overdueActions = allActions.filter(action => {
+                    if (!action.dueDate) return false;
+                    const dueDate = new Date(action.dueDate);
+                    dueDate.setHours(0, 0, 0, 0);
+                    return dueDate.getTime() < today.getTime() && action.status === 'pending';
+                  });
+                  
+                  const totalCount = todayActions.length + overdueActions.length;
+                  
+                  if (totalCount === 0) {
+                    Alert.alert(
+                      '✅ All Clear!',
+                      'You have no action items due today or overdue.\n\nGreat job staying on top of things! 🎉',
+                      [{ text: 'Awesome!' }]
+                    );
+                  } else {
+                    let message = '';
+                    
+                    if (overdueActions.length > 0) {
+                      message += `⚠️ OVERDUE (${overdueActions.length}):\n`;
+                      message += overdueActions.slice(0, 3).map(a => `• ${a.title}`).join('\n');
+                      if (overdueActions.length > 3) {
+                        message += `\n• ...and ${overdueActions.length - 3} more`;
+                      }
+                      message += '\n\n';
+                    }
+                    
+                    if (todayActions.length > 0) {
+                      message += `📅 TODAY (${todayActions.length}):\n`;
+                      message += todayActions.slice(0, 3).map(a => `• ${a.title}`).join('\n');
+                      if (todayActions.length > 3) {
+                        message += `\n• ...and ${todayActions.length - 3} more`;
+                      }
+                    }
+                    
+                    Alert.alert(
+                      `📋 ${totalCount} Task${totalCount > 1 ? 's' : ''}`,
+                      message,
+                      [
+                        { text: 'Dismiss', style: 'cancel' },
+                        {
+                          text: 'View All Tasks',
+                          onPress: () => {
+                            // Scroll to "Let's get this done" section
+                            // User can see all tasks there
+                          }
+                        }
+                      ]
+                    );
+                  }
+                }}
+              >
+                <Text style={styles.headerIcon}>🔔</Text>
+                {(() => {
+                  const today = new Date();
+                  today.setHours(0, 0, 0, 0);
+                  
+                  const count = allActions.filter(action => {
+                    if (!action.dueDate || action.status !== 'pending') return false;
+                    const dueDate = new Date(action.dueDate);
+                    dueDate.setHours(0, 0, 0, 0);
+                    // Include today's tasks and overdue tasks
+                    return dueDate.getTime() <= today.getTime();
+                  }).length;
+                  
+                  return count > 0 ? (
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>{count}</Text>
+                    </View>
+                  ) : null;
+                })()}
+              </TouchableOpacity>
+
+              {/* Messages Icon - Shows group plans count (placeholder for future feature) */}
+              <TouchableOpacity 
+                style={styles.headerIconButton}
+                onPress={() => {
+                  Alert.alert(
+                    'Group Plans',
+                    'Collaborate with others on shared tasks! This feature is coming soon.\n\n💡 You\'ll be able to:\n• Share memos with groups\n• Collaborate on tasks\n• Track team progress',
+                    [{ text: 'Got it!' }]
+                  );
+                }}
+              >
+                <Text style={styles.headerIcon}>💬</Text>
+                {/* Placeholder badge - will show actual count when feature is implemented */}
+                <View style={[styles.badge, styles.badgeInactive]}>
+                  <Text style={styles.badgeText}>0</Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Settings Icon */}
+              <TouchableOpacity 
+                style={styles.headerIconButton}
+                onPress={() => router.push('/(tabs)/profile')}
+              >
+                <Text style={styles.headerIcon}>⚙️</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </LinearGradient>
 
+        {/* Google Calendar Connect Banner */}
+        <View style={styles.calendarBannerSection}>
+          <GoogleCalendarSync />
+        </View>
+
+        {/* Empty State for New Users */}
+        {memos.length === 0 && (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateEmoji}>🎙️</Text>
+            <Text style={styles.emptyStateTitle}>Welcome to MemoVox!</Text>
+            <Text style={styles.emptyStateText}>
+              Start by recording your first voice memo. JEETU will transcribe, organize, and extract tasks automatically.
+            </Text>
+            
+            <View style={styles.emptyStateFeatures}>
+              <View style={styles.featureItem}>
+                <Text style={styles.featureEmoji}>✨</Text>
+                <Text style={styles.featureText}>AI-powered transcription</Text>
+              </View>
+              <View style={styles.featureItem}>
+                <Text style={styles.featureEmoji}>🤖</Text>
+                <Text style={styles.featureText}>Smart task extraction</Text>
+              </View>
+              <View style={styles.featureItem}>
+                <Text style={styles.featureEmoji}>📊</Text>
+                <Text style={styles.featureText}>Automatic organization</Text>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={styles.emptyStateCTA}
+              onPress={() => router.push('/(tabs)/record')}
+            >
+              <Text style={styles.emptyStateCTAText}>🎤 Record Your First Memo</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Show content only if user has memos */}
+        {memos.length > 0 && (
+          <>
         {/* Carousel: Progress & Today's Tasks & This Week */}
         <View style={styles.section}>
           <ScrollView
@@ -574,7 +741,7 @@ export default function Home() {
                     
                     return (
                       <View key={action.id} style={styles.memoTaskCard}>
-                        {/* Task Header */}
+                        {/* Task Header with Menu */}
                         <View style={styles.memoTaskHeader}>
                           <View style={styles.memoTaskBadges}>
                             <View
@@ -604,9 +771,77 @@ export default function Home() {
                               </Text>
                             </View>
                           </View>
-                          <Text style={styles.memoTaskTime}>
-                            {action.dueDate ? formatRelativeTime(action.dueDate) : formatRelativeTime(action.createdAt)}
-                          </Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <Text style={styles.memoTaskTime}>
+                              {action.dueDate ? formatRelativeTime(action.dueDate) : formatRelativeTime(action.createdAt)}
+                            </Text>
+                            <TaskMenu
+                              menuItems={[
+                                {
+                                  icon: '💡',
+                                  label: 'Insight',
+                                  backgroundColor: COLORS.primary,
+                                  onPress: () => {
+                                    // If has linked memo, show memo context
+                                    if (action.linkedMemoId) {
+                                      router.push({
+                                        pathname: '/(tabs)/chat',
+                                        params: { 
+                                          memoId: action.linkedMemoId,
+                                          mode: 'memo-insight'
+                                        }
+                                      });
+                                    } else {
+                                      // Otherwise, show task context
+                                      router.push({
+                                        pathname: '/(tabs)/chat',
+                                        params: { 
+                                          taskId: action.id,
+                                          taskTitle: action.title,
+                                          taskDescription: action.description || '',
+                                          mode: 'task-insight'
+                                        }
+                                      });
+                                    }
+                                  },
+                                },
+                                {
+                                  icon: '💾',
+                                  label: 'Save for Later',
+                                  backgroundColor: '#34C759',
+                                  onPress: async () => {
+                                    // Mark action as completed (saved for later)
+                                    await AgentService.completeAction(action.id, user?.id || '');
+                                    await loadData();
+                                    Alert.alert('Saved!', `"${action.title}" saved for later.`);
+                                  },
+                                },
+                                {
+                                  icon: '🗑️',
+                                  label: 'Delete',
+                                  backgroundColor: '#FF3B30',
+                                  destructive: true,
+                                  onPress: async () => {
+                                    Alert.alert(
+                                      'Delete Task',
+                                      `Are you sure you want to delete "${action.title}"?`,
+                                      [
+                                        { text: 'Cancel', style: 'cancel' },
+                                        {
+                                          text: 'Delete',
+                                          style: 'destructive',
+                                          onPress: async () => {
+                                            await AgentService.deleteAction(action.id, user?.id || '');
+                                            await loadData();
+                                          },
+                                        },
+                                      ]
+                                    );
+                                  },
+                                },
+                              ]}
+                            />
+                          </View>
                         </View>
 
                         {/* Task Title & Description */}
@@ -628,65 +863,6 @@ export default function Home() {
                             </Text>
                           </View>
                         )}
-
-                        {/* Action Buttons: Play (if has linked memo), Insight, Save for Later, Delete */}
-                        <View style={styles.memoActions}>
-                          {linkedMemo && (
-                            <AnimatedActionButton
-                              icon={playingMemoId === linkedMemo.id && isPlaying ? "⏸" : "▶️"}
-                              label={playingMemoId === linkedMemo.id && isPlaying ? "Pause" : "Play"}
-                              backgroundColor="#FF9500"
-                              onPress={() => playAudio(linkedMemo)}
-                            />
-                          )}
-                          
-                          <AnimatedActionButton
-                            icon="💡"
-                            label="Insight"
-                            backgroundColor={COLORS.primary}
-                            onPress={() => {
-                              router.push({
-                                pathname: '/(tabs)/chat',
-                                params: { memoId: action.linkedMemoId }
-                              });
-                            }}
-                          />
-                          
-                          <AnimatedActionButton
-                            icon="💾"
-                            label="Save"
-                            backgroundColor="#34C759"
-                            onPress={async () => {
-                              // Mark action as completed (saved for later)
-                              await AgentService.completeAction(action.id, user?.id || '');
-                              await loadData();
-                              Alert.alert('Saved!', `"${action.title}" marked as complete.`);
-                            }}
-                          />
-                          
-                          <AnimatedActionButton
-                            icon="🗑️"
-                            label="Delete"
-                            backgroundColor="#FF3B30"
-                            onPress={async () => {
-                              Alert.alert(
-                                'Delete Task',
-                                `Are you sure you want to delete "${action.title}"?`,
-                                [
-                                  { text: 'Cancel', style: 'cancel' },
-                                  {
-                                    text: 'Delete',
-                                    style: 'destructive',
-                                    onPress: async () => {
-                                      await AgentService.deleteAction(action.id, user?.id || '');
-                                      await loadData();
-                                    },
-                                  },
-                                ]
-                              );
-                            }}
-                          />
-                        </View>
                       </View>
                     );
                   })}
@@ -771,6 +947,8 @@ export default function Home() {
             </View>
           </TouchableOpacity>
         </View>
+        </>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -786,6 +964,54 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 32,
   },
+  headerContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  headerLeft: {
+    flex: 1,
+    marginRight: 16,
+  },
+  headerIcons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  headerIconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  headerIcon: {
+    fontSize: 22,
+  },
+  badge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#FF3B30',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  badgeInactive: {
+    backgroundColor: '#8E8E93',
+  },
+  badgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#fff',
+  },
   greeting: {
     fontSize: 28,
     fontWeight: 'bold',
@@ -796,6 +1022,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: COLORS.white,
     opacity: 0.9,
+  },
+  calendarBannerSection: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
   section: {
     padding: 16,
@@ -1067,6 +1298,48 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: COLORS.white,
+  },
+  emptyState: {
+    padding: 32,
+    alignItems: 'center',
+  },
+  emptyStateEmoji: {
+    fontSize: 80,
+    marginBottom: 24,
+  },
+  emptyStateFeatures: {
+    width: '100%',
+    marginBottom: 32,
+  },
+  featureItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingLeft: 16,
+  },
+  featureEmoji: {
+    fontSize: 24,
+    marginRight: 12,
+  },
+  featureText: {
+    fontSize: 16,
+    color: '#374151',
+  },
+  emptyStateCTA: {
+    backgroundColor: '#667eea',
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 12,
+    shadowColor: '#667eea',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  emptyStateCTAText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#fff',
   },
   // Carousel styles
   carouselIndicators: {

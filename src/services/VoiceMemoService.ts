@@ -54,15 +54,8 @@ export class VoiceMemoService {
     audioData: Blob | Buffer
   ): Promise<string | null> {
     try {
-      console.log(' DEBUG: uploadAudio START');
-      console.log('🔴 DEBUG: audioUri:', audioUri);
-      console.log('🔴 DEBUG: audioData type:', audioData.constructor.name);
-      console.log('🔴 DEBUG: audioData size:', audioData instanceof Blob ? audioData.size : Buffer.byteLength(audioData as any));
-      
       const filename = `${userId}/${memoId}.m4a`;
-      console.log('🔴 DEBUG: upload filename:', filename);
 
-      console.log('🔴 DEBUG: Starting Supabase upload...');
       const { data, error } = await supabase.storage
         .from(this.BUCKET_NAME)
         .upload(filename, audioData, {
@@ -71,23 +64,17 @@ export class VoiceMemoService {
         });
 
       if (error) {
-        console.log('⚠️ Supabase upload unavailable, using local storage:', error.message);
         // Fallback to local URI - this is expected behavior when offline or Supabase is unreachable
         return audioUri;
       }
-
-      console.log('🔴 DEBUG: Upload successful, data:', data);
 
       // Get public URL
       const { data: publicData } = supabase.storage
         .from(this.BUCKET_NAME)
         .getPublicUrl(filename);
 
-      console.log('🔴 DEBUG: Public URL obtained:', publicData.publicUrl);
-      console.log('Audio uploaded successfully:', publicData.publicUrl);
       return publicData.publicUrl;
     } catch (error) {
-      console.log('⚠️ Audio upload failed, using local storage instead');
       // Return local URI as fallback - app will work with local files
       return audioUri;
     }

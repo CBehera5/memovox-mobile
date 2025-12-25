@@ -12,9 +12,13 @@ import {
   StyleSheet,
   FlatList,
   Share,
+  StatusBar,
+  Modal,
+  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { useLocalSearchParams, useFocusEffect, useRouter } from 'expo-router';
+import * as Contacts from 'expo-contacts';
 import ChatService, { ChatMessage, ChatSession } from '../../src/services/ChatService';
 import AudioService from '../../src/services/AudioService';
 import StorageService from '../../src/services/StorageService';
@@ -23,15 +27,44 @@ import PersonalCompanionService from '../../src/services/PersonalCompanionServic
 import ActionService from '../../src/services/ActionService';
 import AgentActionManager from '../../src/services/AgentActionManager';
 import AgentService from '../../src/services/AgentService';
+import SubscriptionService from '../../src/services/SubscriptionService';
+import { 
+  GroupPlanningService, 
+  GroupPlanningSession,
+  GroupPlanningMember 
+} from '../../src/services/GroupPlanningService';
 import AnimatedActionButton from '../../src/components/AnimatedActionButton';
+import VoiceInputButton from '../../src/components/VoiceInputButton';
 import { User, VoiceMemo, AgentSuggestion } from '../../src/types';
 
+// Types for contacts and group members
+interface Contact {
+  id: string;
+  name: string;
+  phoneNumbers?: Array<{ number?: string; digits?: string; label?: string }>;
+  emails?: Array<{ email?: string; label?: string }>;
+}
+
+interface GroupMember {
+  id: string;
+  name: string;
+  isMemovoxUser: boolean;
+  contactInfo: string; // phone or email
+}
+
 const ChatScreen: React.FC = () => {
+  const router = useRouter();
   const params = useLocalSearchParams<{
     memoId?: string;
+    taskId?: string;
+    taskTitle?: string;
+    taskDescription?: string;
+    mode?: 'task-insight' | 'memo-insight';
   }>();
 
   const [user, setUser] = useState<User | null>(null);
+  const [hasAIAccess, setHasAIAccess] = useState<boolean>(false);
+  const [checkingAccess, setCheckingAccess] = useState<boolean>(true);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSession, setCurrentSession] = useState<ChatSession | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -47,6 +80,16 @@ const ChatScreen: React.FC = () => {
   const [insightLoading, setInsightLoading] = useState(false);
   const [agentSuggestions, setAgentSuggestions] = useState<AgentSuggestion[]>([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [questionsLoading, setQuestionsLoading] = useState(false);
+  const [isGroupPlanMode, setIsGroupPlanMode] = useState(false);
+  const [groupPlanMembers, setGroupPlanMembers] = useState<GroupMember[]>([]);
+  const [groupPlanTopic, setGroupPlanTopic] = useState('');
+  const [showContactPicker, setShowContactPicker] = useState(false);
+  const [groupSession, setGroupSession] = useState<GroupPlanningSession | null>(null);
+  const [isCollaborative, setIsCollaborative] = useState(false);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [loadingContacts, setLoadingContacts] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const scrollViewRef = useRef<ScrollView>(null);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -54,20 +97,40 @@ const ChatScreen: React.FC = () => {
   useFocusEffect(
     React.useCallback(() => {
       const loadUser = async () => {
+        setCheckingAccess(true);
         const userData = await StorageService.getUser();
         setUser(userData);
-        if (userData?.id) {
-          // If we have a memoId, create a fresh session for this memo
-          if (params.memoId) {
+        
+        // Check AI access
+        const access = await SubscriptionService.canUseAIChat();
+        setHasAIAccess(access);
+        setCheckingAccess(false);
+        
+        if (userData?.id && access) {
+          // If we have a memoId, create a fresh session for this memo (only once)
+          if (params.memoId && !currentSession && !memoLoaded) {
             await createMemoSpecificSession(userData.id);
-          } else if (!currentSession) {
+          } else if (!currentSession && !params.memoId && !params.mode) {
+            // Only load sessions if we don't have a current session and no special params
             loadSessions();
           }
         }
       };
       loadUser();
-    }, [params.memoId, currentSession])
+    }, [params.memoId, currentSession, memoLoaded, params.mode])
   );
+
+  // Reset state when memoId, taskId, or mode changes (navigating to different insights)
+  useEffect(() => {
+    // Reset all insight-related state when params change
+    setMemoLoaded(false);
+    setSelectedMemo(null);
+    setMemoInsight(null);
+    setShowingInsight(false);
+    setMessages([]);
+    setAgentSuggestions([]);
+    setCurrentSession(null);
+  }, [params.memoId, params.taskId, params.mode]);
 
   // Load memo insight when memo ID is provided and session is ready
   useEffect(() => {
@@ -95,6 +158,32 @@ const ChatScreen: React.FC = () => {
               setSuggestionsLoading(false);
             }
             
+            // Generate proactive questions and add as AI message
+            setQuestionsLoading(true);
+            try {
+              const questions = await ChatService.generateProactiveQuestions({
+                userMessage: memo.transcription,
+                conversationHistory: [],
+              });
+              
+              // Add questions as a natural conversation message
+              if (questions.length > 0) {
+                const questionsMessage: ChatMessage = {
+                  id: `questions_${Date.now()}`,
+                  role: 'assistant',
+                  content: `💡 **Here's what I can help with:**\n\n${questions.map((q, i) => `${i + 1}. ${q}`).join('\n\n')}\n\nWhat would you like to know or discuss about this?`,
+                  timestamp: new Date().toISOString(),
+                };
+                
+                // Add to messages
+                setMessages(prev => [...prev, questionsMessage]);
+              }
+            } catch (error) {
+              console.error('Error generating proactive questions:', error);
+            } finally {
+              setQuestionsLoading(false);
+            }
+            
             setMemoLoaded(true);
           }
         } catch (error) {
@@ -112,6 +201,70 @@ const ChatScreen: React.FC = () => {
     }
   }, [params.memoId, user?.id, memoLoaded]);
 
+  // Load task context when task ID is provided
+  useEffect(() => {
+    const loadTaskContext = async () => {
+      if (params.mode === 'task-insight' && params.taskId && !memoLoaded) {
+        try {
+          setIsLoading(true);
+          
+          // Generate context-aware greeting for the task
+          const greeting = await ChatService.generateTaskContextGreeting({
+            title: params.taskTitle || 'Untitled Task',
+            transcription: params.taskDescription || '',
+          });
+          
+          // Add greeting as first AI message
+          const aiMessage: ChatMessage = {
+            id: `task_greeting_${Date.now()}`,
+            role: 'assistant',
+            content: greeting,
+            timestamp: new Date().toISOString(),
+          };
+          
+          setMessages([aiMessage]);
+          
+          // Generate proactive questions about the task and add as AI message
+          setQuestionsLoading(true);
+          try {
+            const questions = await ChatService.generateProactiveQuestions({
+              userMessage: `${params.taskTitle}: ${params.taskDescription}`,
+              conversationHistory: [],
+            });
+            
+            // Add questions as a natural conversation message
+            if (questions.length > 0) {
+              const questionsMessage: ChatMessage = {
+                id: `questions_${Date.now()}`,
+                role: 'assistant',
+                content: `💡 **Here's what I can help with:**\n\n${questions.map((q, i) => `${i + 1}. ${q}`).join('\n\n')}\n\nWhat would you like to know or discuss about this?`,
+                timestamp: new Date().toISOString(),
+              };
+              
+              // Add to messages
+              setMessages(prev => [...prev, questionsMessage]);
+            }
+          } catch (error) {
+            console.error('Error generating questions:', error);
+          } finally {
+            setQuestionsLoading(false);
+          }
+          
+          setMemoLoaded(true); // Reuse this flag to prevent reloading
+        } catch (error) {
+          console.error('Error loading task context:', error);
+          Alert.alert('Error', 'Failed to load task context');
+        } finally {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    if (params.mode === 'task-insight' && params.taskId && user?.id && !memoLoaded) {
+      loadTaskContext();
+    }
+  }, [params.mode, params.taskId, params.taskTitle, params.taskDescription, user?.id, memoLoaded]);
+
   useEffect(() => {
     if (currentSession) {
       setMessages(currentSession.messages);
@@ -122,16 +275,31 @@ const ChatScreen: React.FC = () => {
     scrollViewRef.current?.scrollToEnd({ animated: true });
   }, [messages]);
 
+  // Clean up collaborative session when leaving screen
+  useEffect(() => {
+    return () => {
+      if (isCollaborative) {
+        if (__DEV__) {
+          console.log('🧹 Cleaning up: Unsubscribing from collaborative session');
+        }
+        GroupPlanningService.unsubscribe();
+      }
+    };
+  }, [isCollaborative]);
+
   const loadSessions = async () => {
     if (!user?.id) return;
+    // Prevent duplicate loading
+    if (currentSession) return;
+    
     try {
       const userSessions = await ChatService.getUserSessions(user.id);
       setSessions(userSessions);
       
-      if (userSessions.length > 0) {
+      if (userSessions.length > 0 && !currentSession) {
         const session = await ChatService.loadSession(userSessions[0].id);
         setCurrentSession(session);
-      } else {
+      } else if (userSessions.length === 0 && !currentSession) {
         createNewSession();
       }
     } catch (error) {
@@ -142,25 +310,21 @@ const ChatScreen: React.FC = () => {
 
   const createNewSession = async () => {
     if (!user?.id) return;
+    // Prevent duplicate creation
+    if (currentSession) {
+      console.log('Session already exists, skipping creation');
+      return;
+    }
+    
     try {
       const timestamp = new Date().toLocaleString();
       const session = await ChatService.createSession(user.id, `Chat ${timestamp}`);
       
-      // Ensure the session is properly loaded from storage
-      const loadedSession = await ChatService.loadSession(session.id);
-      
-      if (loadedSession) {
-        // Refresh all sessions from storage to get the updated list
-        const allSessions = await ChatService.getUserSessions(user.id);
-        setSessions(allSessions);
-        setCurrentSession(loadedSession);
-        setMessages(loadedSession.messages || []);
-      } else {
-        // Fallback to the session object returned from creation
-        setSessions([session, ...sessions]);
-        setCurrentSession(session);
-        setMessages([]);
-      }
+      // Refresh all sessions from storage to get the updated list
+      const allSessions = await ChatService.getUserSessions(user.id);
+      setSessions(allSessions);
+      setCurrentSession(session);
+      setMessages(session.messages || []);
       
       setShowSessionList(false);
     } catch (error) {
@@ -170,18 +334,18 @@ const ChatScreen: React.FC = () => {
   };
 
   const createMemoSpecificSession = async (userId: string) => {
+    // Prevent duplicate creation
+    if (currentSession) {
+      console.log('Memo session already exists, skipping creation');
+      return;
+    }
+    
     try {
       // Create a new session specifically for this memo
       const timestamp = new Date().toLocaleString();
       const session = await ChatService.createSession(userId, `Insight - ${timestamp}`);
       
-      // Verify it was created
-      const loadedSession = await ChatService.loadSession(session.id);
-      
-      if (loadedSession) {
-        setCurrentSession(loadedSession);
-        setMessages([]);
-      } else {
+      if (session) {
         setCurrentSession(session);
         setMessages([]);
       }
@@ -196,25 +360,84 @@ const ChatScreen: React.FC = () => {
   const sendTextMessage = async () => {
     if (!textInput.trim()) return;
     
-    // Auto-create session if none exists
-    if (!currentSession) {
-      if (!user?.id) {
-        Alert.alert('Error', 'Please log in to use chat');
-        return;
+    const userMessage = textInput;
+    setTextInput('');
+    
+    try {
+      setIsLoading(true);
+      
+      // CHECK IF WE'RE IN COLLABORATIVE GROUP PLANNING MODE
+      if (isCollaborative && groupSession) {
+        if (__DEV__) {
+          console.log('📤 Sending message to collaborative session:', groupSession.id);
+        }
+        
+        // SEND USER MESSAGE TO GROUP
+        await GroupPlanningService.sendMessage(
+          groupSession.id,
+          user!.id,
+          user!.name,
+          {
+            role: 'user',
+            content: userMessage,
+            timestamp: new Date().toISOString(),
+          }
+        );
+        
+        // GET JEETU'S AI RESPONSE
+        // Create a temp session if needed for AI response
+        if (!currentSession) {
+          const timestamp = new Date().toLocaleString();
+          const tempSession = await ChatService.createSession(user!.id, `Temp ${timestamp}`);
+          setCurrentSession(tempSession);
+          await ChatService.loadSession(tempSession.id);
+        } else {
+          await ChatService.loadSession(currentSession.id);
+        }
+        
+        const response = await ChatService.sendMessage(userMessage);
+        
+        if (response) {
+          // BROADCAST JEETU'S RESPONSE TO ALL MEMBERS
+          await GroupPlanningService.sendMessage(
+            groupSession.id,
+            'system',
+            'JEETU',
+            {
+              role: 'assistant',
+              content: response.aiResponse.content,
+              timestamp: new Date().toISOString(),
+            }
+          );
+          
+          if (__DEV__) {
+            console.log('✅ JEETU response broadcast to all members');
+          }
+          
+          // Check for action requests
+          await handlePotentialAction(userMessage);
+        }
+        
+        setIsLoading(false);
+        return; // Exit early for collaborative mode
       }
       
-      console.log('No session found, creating one automatically...');
-      try {
+      // EXISTING CODE FOR NON-COLLABORATIVE CHAT CONTINUES BELOW...
+    
+      // Auto-create session if none exists
+      if (!currentSession) {
+        if (!user?.id) {
+          Alert.alert('Error', 'Please log in to use chat');
+          setIsLoading(false);
+          return;
+        }
+        
+        console.log('No session found, creating one automatically...');
         const timestamp = new Date().toLocaleString();
         const newSession = await ChatService.createSession(user.id, `Chat ${timestamp}`);
         setCurrentSession(newSession);
         setMessages([]);
         
-        // Continue with sending the message using the new session
-        const userMessage = textInput;
-        setTextInput('');
-        
-        setIsLoading(true);
         await ChatService.loadSession(newSession.id);
         const response = await ChatService.sendMessage(userMessage);
         
@@ -226,20 +449,8 @@ const ChatScreen: React.FC = () => {
         }
         setIsLoading(false);
         return;
-      } catch (error) {
-        console.error('Error creating session:', error);
-        Alert.alert('Error', 'Failed to create chat session. Please try again.');
-        setIsLoading(false);
-        return;
       }
-    }
-
-    const userMessage = textInput;
-    setTextInput('');
     
-    try {
-      setIsLoading(true);
-      
       // Ensure current session is loaded in ChatService
       await ChatService.loadSession(currentSession.id);
       
@@ -253,6 +464,39 @@ const ChatScreen: React.FC = () => {
         
         // Check if user message contains action request (reminders, alarms, etc)
         await handlePotentialAction(userMessage);
+        
+        // Generate proactive questions for follow-up (only if not an irrelevant question)
+        try {
+          const isIrrelevant = await ChatService.isIrrelevantQuestion(userMessage);
+          if (!isIrrelevant) {
+            const questions = await ChatService.generateProactiveQuestions({
+              userMessage,
+              conversationHistory: updatedSession.messages,
+            });
+            
+            // Add questions as a natural conversation message
+            if (questions.length > 0) {
+              const questionsMessage: ChatMessage = {
+                id: `questions_${Date.now()}`,
+                role: 'assistant',
+                content: `💡 **Here's what I can help with:**\n\n${questions.map((q, i) => `${i + 1}. ${q}`).join('\n\n')}\n\nWhat would you like to know or discuss about this?`,
+                timestamp: new Date().toISOString(),
+              };
+              
+              // Add to current session and update messages
+              const sessionWithQuestions = { 
+                ...updatedSession, 
+                messages: [...updatedSession.messages, questionsMessage] 
+              };
+              setCurrentSession(sessionWithQuestions);
+              setMessages(sessionWithQuestions.messages);
+              // Save to storage
+              await StorageService.saveChatSession(sessionWithQuestions);
+            }
+          }
+        } catch (error) {
+          console.error('Error generating proactive questions:', error);
+        }
       }
     } catch (error) {
       console.error('Error sending message:', error);
@@ -460,7 +704,7 @@ const ChatScreen: React.FC = () => {
         return;
       }
       
-      const shareText = `JARVIS Insight:\n\n${memoInsight.summary || ''}\n\n${memoInsight.personalTouch || ''}`;
+      const shareText = `JEETU Insight:\n\n${memoInsight.summary || ''}\n\n${memoInsight.personalTouch || ''}`;
       
       await Share.share({
         message: shareText,
@@ -472,7 +716,6 @@ const ChatScreen: React.FC = () => {
     }
   };
 
-  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
   const [createdActionIds, setCreatedActionIds] = useState<Set<string>>(new Set());
 
   const handleCreateAction = async (suggestion: AgentSuggestion) => {
@@ -578,25 +821,6 @@ const ChatScreen: React.FC = () => {
 
   const renderMessage = ({ item }: { item: ChatMessage }) => {
     const isUserMessage = item.role === 'user';
-    const isSpeaking = speakingMessageId === item.id;
-
-    const handleSpeakMessage = async () => {
-      try {
-        if (isSpeaking) {
-          // Stop speaking
-          await ChatService.stopSpeech();
-          setSpeakingMessageId(null);
-        } else {
-          // Start speaking
-          setSpeakingMessageId(item.id);
-          await ChatService.generateSpeech(item.content);
-          setSpeakingMessageId(null);
-        }
-      } catch (error) {
-        console.error('Error speaking message:', error);
-        setSpeakingMessageId(null);
-      }
-    };
 
     return (
       <View style={[styles.messageContainer, isUserMessage ? styles.userMessageContainer : styles.aiMessageContainer]}>
@@ -610,24 +834,6 @@ const ChatScreen: React.FC = () => {
               minute: '2-digit',
             })}
           </Text>
-          
-          {/* Speak button for AI messages - only on native platforms */}
-          {!isUserMessage && Platform.OS !== 'web' && (
-            <TouchableOpacity 
-              style={styles.speakButton}
-              onPress={handleSpeakMessage}
-              activeOpacity={0.7}
-            >
-              <Ionicons 
-                name={isSpeaking ? 'stop-circle' : 'volume-high'} 
-                size={16} 
-                color={isSpeaking ? '#FF3B30' : '#007AFF'}
-              />
-              <Text style={[styles.speakButtonText, isSpeaking && { color: '#FF3B30' }]}>
-                {isSpeaking ? 'Stop' : 'Listen'}
-              </Text>
-            </TouchableOpacity>
-          )}
         </View>
       </View>
     );
@@ -641,19 +847,19 @@ const ChatScreen: React.FC = () => {
       return (
         <View style={[styles.messagesContainer, { justifyContent: 'center', alignItems: 'center' }]}>
           <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={{ marginTop: 12, color: '#666', fontSize: 16 }}>Generating insights with JARVIS...</Text>
+          <Text style={{ marginTop: 12, color: '#666', fontSize: 16 }}>Generating insights with JEETU...</Text>
         </View>
       );
     }
 
     // Build greeting and summary message
-    const summaryMessage = `Hi, I am JARVIS, your AI companion.\n\n${memoInsight.summary || ''}${
+    const summaryMessage = `Hi, I am JEETU, your AI companion.\n\n${memoInsight.summary || ''}${
       memoInsight.personalTouch ? '\n\n' + memoInsight.personalTouch : ''
     }`;
 
     return (
       <ScrollView style={styles.messagesContainer} contentContainerStyle={styles.messagesContent}>
-        {/* JARVIS Insight Message */}
+        {/* JEETU Insight Message */}
         <View style={styles.messageContainer}>
           <View style={styles.aiMessageBubble}>
             <Text style={styles.aiMessageText}>{summaryMessage}</Text>
@@ -669,7 +875,6 @@ const ChatScreen: React.FC = () => {
         {/* Action Buttons */}
         {memoInsight.actionableItems && memoInsight.actionableItems.length > 0 && (
           <View style={styles.actionButtonsContainer}>
-            <Text style={styles.actionButtonsTitle}>Here are some actions I can help with:</Text>
             {memoInsight.actionableItems.map((item: any, index: number) => (
               <TouchableOpacity
                 key={index}
@@ -704,7 +909,7 @@ const ChatScreen: React.FC = () => {
         {agentSuggestions && agentSuggestions.length > 0 && (
           <View style={styles.agentSuggestionsContainer}>
             <Text style={styles.agentSuggestionsTitle}>
-              🤖 AI Suggested Actions
+              🤖 JEETU's recommendation
             </Text>
             <Text style={styles.agentSuggestionsSubtitle}>
               I analyzed your memo and found these actionable items:
@@ -833,7 +1038,7 @@ const ChatScreen: React.FC = () => {
               backgroundColor="#FF9500"
               onPress={async () => {
                 // Add insight message to chat
-                const summaryMessage = `Hi, I am JARVIS, your AI companion.\n\n${memoInsight.summary || ''}${
+                const summaryMessage = `Hi, I am JEETU, your AI companion.\n\n${memoInsight.summary || ''}${
                   memoInsight.personalTouch ? '\n\n' + memoInsight.personalTouch : ''
                 }`;
                 
@@ -897,10 +1102,459 @@ const ChatScreen: React.FC = () => {
     </TouchableOpacity>
   );
 
+  const startGroupPlan = async () => {
+    // Show modal first with loading state
+    setShowContactPicker(true);
+    setLoadingContacts(true);
+    
+    // Then load contacts
+    await loadContacts();
+  };
+
+  const loadContacts = async () => {
+    try {
+      setLoadingContacts(true);
+      console.log('📱 Starting to load contacts...');
+      
+      // Request contacts permission
+      const { status } = await Contacts.requestPermissionsAsync();
+      console.log('📱 Contacts permission status:', status);
+      
+      if (status !== 'granted') {
+        Alert.alert(
+          'Permission Required',
+          'Memovox needs access to your contacts to let you invite friends to group planning.\n\nPlease enable contacts permission in your device settings.',
+          [
+            { text: 'Cancel', style: 'cancel', onPress: () => setShowContactPicker(false) },
+            { 
+              text: 'Open Settings', 
+              onPress: () => {
+                setShowContactPicker(false);
+                if (Platform.OS === 'ios') {
+                  Linking.openURL('app-settings:');
+                } else {
+                  Linking.openSettings();
+                }
+              }
+            }
+          ]
+        );
+        setLoadingContacts(false);
+        return;
+      }
+
+      console.log('📱 Permission granted, fetching contacts...');
+      
+      // Get contacts from device
+      const { data } = await Contacts.getContactsAsync({
+        fields: [
+          Contacts.Fields.PhoneNumbers,
+          Contacts.Fields.Emails,
+        ],
+      });
+
+      console.log(`📱 Raw contacts fetched: ${data?.length || 0}`);
+
+      // Filter out contacts without name
+      const filteredContacts = data.filter(contact => contact.name && contact.name.trim() !== '');
+      console.log(`📱 Contacts with names: ${filteredContacts.length}`);
+      
+      // Sort contacts alphabetically
+      const sortedContacts = filteredContacts.sort((a, b) => {
+        const nameA = a.name?.toLowerCase() || '';
+        const nameB = b.name?.toLowerCase() || '';
+        return nameA.localeCompare(nameB);
+      });
+
+      setContacts(sortedContacts as Contact[]);
+      console.log(`📱 ✅ Successfully loaded ${sortedContacts.length} contacts`);
+      
+      if (sortedContacts.length === 0) {
+        Alert.alert(
+          'No Contacts Found',
+          'Your device contact list appears to be empty. Please add some contacts to your device and try again.',
+          [{ text: 'OK' }]
+        );
+      }
+    } catch (error) {
+      console.error('❌ Error loading contacts:', error);
+      Alert.alert(
+        'Error',
+        `Failed to load contacts: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`,
+        [{ text: 'OK' }]
+      );
+    } finally {
+      setLoadingContacts(false);
+    }
+  };
+
+  const checkMemovoxUser = async (contactInfo: string): Promise<boolean> => {
+    // TODO: Implement actual API call to check if user is registered
+    // For now, always return false to enable invite functionality
+    // In production, this would check against your Supabase users table
+    
+    try {
+      // Example API call structure (uncomment and modify when backend is ready):
+      /*
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id')
+        .or(`phone.eq.${contactInfo},email.eq.${contactInfo}`)
+        .single();
+      
+      return !error && !!data;
+      */
+      
+      // For demo: Always return false so invite option is always shown
+      // This ensures users can always invite friends to join Memovox
+      if (__DEV__) {
+        console.log('📧 Checking if contact is Memovox user:', contactInfo);
+        console.log('💡 Returning false to show invite option (no backend API yet)');
+      }
+      return false; // Always show invite option until backend API is implemented
+    } catch (error) {
+      console.error('Error checking user:', error);
+      return false; // Default to showing invite option on error
+    }
+  };
+
+  const handleContactSelect = async (contact: Contact) => {
+    const contactInfo = contact.phoneNumbers?.[0]?.number || contact.emails?.[0]?.email || '';
+    
+    // Check if already added
+    const alreadyAdded = groupPlanMembers.some(m => m.contactInfo === contactInfo);
+    if (alreadyAdded) {
+      Alert.alert('Already Added', `${contact.name} is already in the group.`);
+      return;
+    }
+
+    // Check if user is on Memovox
+    const isMemovoxUser = await checkMemovoxUser(contactInfo);
+    
+    if (!isMemovoxUser) {
+      Alert.alert(
+        '📱 Invite to Memovox',
+        `${contact.name} isn't on Memovox yet.\n\nSend them an invite to join your group planning session!`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: '📲 Send Invite',
+            onPress: async () => {
+              try {
+                const inviteMessage = `Hey ${contact.name}! 👋\n\nI'm inviting you to collaborate with me on Memovox!\n\n🤖 AI-Powered Planning\nMeet JEETU, your AI assistant who helps plan and organize tasks\n\n✨ What We Can Do Together:\n• Voice-to-text memos\n• Collaborative planning\n• Smart task extraction\n• Real-time sync\n\n� Join me now:\nhttps://memovox.app\n\nLet's get productive together!`;
+                
+                const result = await Share.share({
+                  message: inviteMessage,
+                  title: 'Join me on Memovox',
+                });
+                
+                if (result.action === Share.sharedAction) {
+                  if (__DEV__) {
+                    console.log('✅ Invite shared successfully');
+                    if (result.activityType) {
+                      console.log('📱 Shared via:', result.activityType);
+                    }
+                  }
+                  Alert.alert(
+                    '🎉 Invitation Sent!',
+                    `Your invitation has been shared with ${contact.name}.\n\nThey can join your group planning session once they install Memovox!`,
+                    [{ text: 'Great!' }]
+                  );
+                } else if (result.action === Share.dismissedAction) {
+                  if (__DEV__) {
+                    console.log('ℹ️ Share dismissed by user');
+                  }
+                }
+              } catch (error: any) {
+                console.error('❌ Error sharing invite:', error);
+                Alert.alert(
+                  'Share Failed',
+                  `Unable to share the invitation: ${error.message || 'Unknown error'}\n\nPlease try again.`,
+                  [{ text: 'OK' }]
+                );
+              }
+            },
+          },
+        ]
+      );
+      return;
+    }
+
+    // Add member to group
+    const newMember: GroupMember = {
+      id: contact.id,
+      name: contact.name,
+      isMemovoxUser: true,
+      contactInfo,
+    };
+
+    setGroupPlanMembers(prev => [...prev, newMember]);
+    Alert.alert('✅ Added', `${contact.name} has been added to the group!`);
+  };
+
+  const startGroupPlanningSession = async () => {
+    if (groupPlanMembers.length === 0) {
+      Alert.alert('No Members', 'Please add at least one member to start group planning.');
+      return;
+    }
+
+    setShowContactPicker(false);
+    setIsGroupPlanMode(true);
+    
+    try {
+      if (__DEV__) {
+        console.log('🚀 Creating collaborative group planning session...');
+      }
+      
+      // CREATE COLLABORATIVE SESSION IN SUPABASE
+      // Convert GroupMember to GroupPlanningMember format
+      const planningMembers: GroupPlanningMember[] = groupPlanMembers.map(m => ({
+        user_id: m.id,
+        name: m.name,
+        email: m.contactInfo.includes('@') ? m.contactInfo : undefined,
+        phone: m.contactInfo.includes('@') ? undefined : m.contactInfo,
+        joined_at: new Date().toISOString(),
+        is_active: true,
+      }));
+      
+      const session = await GroupPlanningService.createSession(
+        user!.id,
+        user!.name,
+        `Group Plan - ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`,
+        planningMembers
+      );
+      
+      if (__DEV__) {
+        console.log('✅ Session created:', session.id);
+      }
+      
+      setGroupSession(session);
+      setIsCollaborative(true);
+      
+      // SUBSCRIBE TO REALTIME UPDATES
+      GroupPlanningService.subscribeToSession(
+        session.id,
+        (newMessage) => {
+          if (__DEV__) {
+            console.log('📨 New message received:', newMessage.content.substring(0, 50));
+          }
+          // Add message to local state (avoiding duplicates)
+          setMessages(prev => {
+            const exists = prev.some(m => m.id === newMessage.id);
+            if (exists) return prev;
+            return [...prev, newMessage as any];
+          });
+        },
+        (updatedMembers) => {
+          if (__DEV__) {
+            console.log('👥 Members updated:', updatedMembers.length);
+          }
+          // Convert GroupPlanningMember back to GroupMember format
+          const convertedMembers: GroupMember[] = updatedMembers.map(m => ({
+            id: m.user_id,
+            name: m.name,
+            isMemovoxUser: true,
+            contactInfo: m.email || m.phone || '',
+          }));
+          setGroupPlanMembers(convertedMembers);
+        }
+      );
+      
+      // LOAD EXISTING MESSAGES (in case of rejoin)
+      const existingMessages = await GroupPlanningService.getMessages(session.id);
+      if (existingMessages.length > 0) {
+        if (__DEV__) {
+          console.log('📜 Loaded existing messages:', existingMessages.length);
+        }
+        setMessages(existingMessages as any[]);
+      }
+      
+      // SEND WELCOME MESSAGE TO ALL MEMBERS
+      const memberNames = groupPlanMembers.map(m => m.name).join(', ');
+      
+      await GroupPlanningService.sendMessage(
+        session.id,
+        'system',
+        'JEETU',
+        {
+          role: 'assistant',
+          content: `🎯 **Group Planning Mode Activated!**\n\nHi! I'm JEETU, your AI planning assistant. Let's create an amazing plan together!\n\n**Group Members (${groupPlanMembers.length}):**\n${memberNames}\n\n**Let's get started:**\nTell me what you're planning and I'll help break it down into tasks, assign responsibilities, and set deadlines.\n\nWhat would you like to plan today?`,
+          timestamp: new Date().toISOString(),
+        }
+      );
+      
+      if (__DEV__) {
+        console.log('✅ Welcome message sent to all members');
+      }
+      
+    } catch (error) {
+      console.error('❌ Error creating collaborative session:', error);
+      Alert.alert(
+        'Connection Error',
+        'Failed to create group planning session. Please check your internet connection and try again.',
+        [{ text: 'OK' }]
+      );
+      // Revert state
+      setIsGroupPlanMode(false);
+      setIsCollaborative(false);
+    }
+  };
+
+  const removeGroupMember = (memberId: string) => {
+    setGroupPlanMembers(prev => prev.filter(m => m.id !== memberId));
+  };
+
+  const addGroupMember = (memberName: string) => {
+    // This function is now deprecated - use handleContactSelect instead
+    setShowContactPicker(true);
+  };
+
+  const generateGroupPlan = async (planTopic: string) => {
+    if (!planTopic.trim()) return;
+    
+    setGroupPlanTopic(planTopic);
+    setIsLoading(true);
+    
+    try {
+      const memberNames = groupPlanMembers.map(m => m.name).join(', ');
+      // Create enhanced prompt for group planning
+      const groupPlanPrompt = `I'm planning "${planTopic}" with a group of ${groupPlanMembers.length} people: ${memberNames}.
+
+Please help me create a comprehensive plan with:
+1. Key tasks/activities
+2. Suggested timeline
+3. Responsibilities (who should do what)
+4. Important considerations
+5. Success metrics
+
+Make it collaborative and actionable!`;
+
+      // Ensure current session is loaded
+      if (currentSession) {
+        await ChatService.loadSession(currentSession.id);
+      }
+      
+      const response = await ChatService.sendMessage(groupPlanPrompt);
+      
+      if (response && currentSession) {
+        const updatedSession = {
+          ...currentSession,
+          messages: [...currentSession.messages, response.userMessage, response.aiResponse]
+        };
+        setCurrentSession(updatedSession);
+        setMessages(updatedSession.messages);
+        
+        // Auto-extract actions from the plan
+        await handlePotentialAction(response.aiResponse.content);
+      }
+    } catch (error) {
+      console.error('Error generating group plan:', error);
+      Alert.alert('Error', 'Failed to generate group plan. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const sharePlan = async () => {
+    try {
+      if (messages.length === 0) {
+        Alert.alert('No Plan', 'There is no plan to share yet.');
+        return;
+      }
+
+      // Get the conversation content
+      const planContent = messages
+        .filter(m => m.role === 'assistant' && !m.content.includes('Group Planning Mode Activated'))
+        .map(m => m.content)
+        .join('\n\n---\n\n');
+
+      if (!planContent) {
+        Alert.alert('No Plan', 'Generate a plan first before sharing.');
+        return;
+      }
+
+      const memberNames = groupPlanMembers.map(m => m.name).join(', ');
+      const shareText = `🎯 Memovox Group Plan\n\n👥 Group Members: ${memberNames}\n📅 Created: ${new Date().toLocaleDateString()}\n\n${planContent}\n\n---\nCreated with Memovox AI Planning`;
+
+      await Share.share({
+        message: shareText,
+        title: 'Share Group Plan',
+      });
+    } catch (error) {
+      console.error('Error sharing plan:', error);
+      Alert.alert('Error', 'Failed to share plan.');
+    }
+  };
+
+  const exitGroupPlanMode = () => {
+    // Clean up collaborative session
+    if (isCollaborative && groupSession) {
+      if (__DEV__) {
+        console.log('🛑 Ending collaborative session:', groupSession.id);
+      }
+      
+      // End session in database
+      GroupPlanningService.endSession(groupSession.id).catch(error => {
+        console.error('Error ending session:', error);
+      });
+      
+      // Unsubscribe from realtime updates
+      GroupPlanningService.unsubscribe();
+    }
+    
+    // Reset all group planning state
+    setIsGroupPlanMode(false);
+    setGroupPlanMembers([]);
+    setGroupPlanTopic('');
+    setIsCollaborative(false);
+    setGroupSession(null);
+    
+    if (__DEV__) {
+      console.log('✅ Exited group planning mode');
+    }
+  };
+
   if (!user) {
     return (
       <View style={styles.centerContainer}>
         <Text style={styles.errorText}>Please log in to use chat</Text>
+      </View>
+    );
+  }
+
+  // Show loading while checking access
+  if (checkingAccess) {
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator size="large" color="#6366f1" style={{ marginTop: 100 }} />
+        <Text style={styles.loadingText}>Checking access...</Text>
+      </View>
+    );
+  }
+
+  // Show upgrade prompt if no AI access
+  if (!hasAIAccess) {
+    return (
+      <View style={styles.upgradeContainer}>
+        <Text style={styles.upgradeEmoji}>✨</Text>
+        <Text style={styles.upgradeTitle}>Chat with JEETU</Text>
+        <Text style={styles.upgradeDescription}>
+          Your AI companion ready to help organize your thoughts and tasks
+        </Text>
+        <Text style={styles.upgradeFeatureTitle}>Premium Features:</Text>
+        <View style={styles.featureList}>
+          <Text style={styles.featureItem}>💬 Unlimited AI conversations</Text>
+          <Text style={styles.featureItem}>🧠 Context-aware insights</Text>
+          <Text style={styles.featureItem}>📝 Smart task suggestions</Text>
+          <Text style={styles.featureItem}>🎯 Proactive planning help</Text>
+        </View>
+        <TouchableOpacity 
+          style={styles.upgradeCTA}
+          onPress={() => router.push('/(tabs)/profile?showUpgrade=true')}
+        >
+          <Text style={styles.upgradeCTAText}>Upgrade to Premium</Text>
+        </TouchableOpacity>
+        <Text style={styles.trialNote}>Or enjoy your 15-day Pro trial!</Text>
       </View>
     );
   }
@@ -917,22 +1571,51 @@ const ChatScreen: React.FC = () => {
               </Text>
             </TouchableOpacity>
           </View>
-          <TouchableOpacity 
-            style={styles.addMembersButton} 
-            onPress={() => {
-              Alert.alert(
-                '🚀 Upcoming Feature',
-                'Adding members to group planning is coming soon! Stay tuned for collaborative planning features.',
-                [{ text: 'Got it!', style: 'default' }]
-              );
-            }}
-          >
-            <Ionicons name="people-outline" size={20} color="#007AFF" />
-            <Text style={styles.addMembersText}>Add</Text>
-          </TouchableOpacity>
+          {!isGroupPlanMode ? (
+            <TouchableOpacity 
+              style={styles.groupPlanButton} 
+              onPress={startGroupPlan}
+            >
+              <Ionicons name="people" size={20} color="#FFFFFF" />
+              <Text style={styles.groupPlanText}>Group Plan</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.headerRightGroup}>
+              <TouchableOpacity 
+                style={styles.addMembersButton} 
+                onPress={() => setShowContactPicker(true)}
+              >
+                <Ionicons name="person-add" size={16} color="#007AFF" />
+                <Text style={styles.addMembersText}>Add</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.shareButtonWithText} 
+                onPress={sharePlan}
+              >
+                <Ionicons name="share-outline" size={18} color="#667EEA" />
+                <Text style={styles.shareButtonText}>Share</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.exitGroupButton} 
+                onPress={exitGroupPlanMode}
+              >
+                <Ionicons name="close-circle" size={20} color="#FF3B30" />
+                <Text style={styles.exitGroupText}>Exit</Text>
+              </TouchableOpacity>
+            </View>
+          )}
           <TouchableOpacity style={styles.newChatButton} onPress={createNewSession}>
             <Ionicons name="add-circle" size={24} color="#007AFF" />
           </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Group Plan Mode Indicator */}
+      {isGroupPlanMode && !showingInsight && (
+        <View style={styles.groupModeIndicator}>
+          <Text style={styles.groupModeText}>
+            🎯 Group Planning Mode • Members ({groupPlanMembers.length}): {groupPlanMembers.map(m => m.name).join(', ')}
+          </Text>
         </View>
       )}
 
@@ -957,13 +1640,14 @@ const ChatScreen: React.FC = () => {
           contentContainerStyle={styles.messagesContent}
           onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
         >
-          {messages.length === 0 ? (
+          {messages.length === 0 && !isRecording && (
             <View style={styles.emptyState}>
               <Ionicons name="chatbubbles-outline" size={48} color="#D0D0D0" />
               <Text style={styles.emptyText}>Start a conversation</Text>
               <Text style={styles.emptySubtext}>Record a voice message or type your question</Text>
             </View>
-          ) : (
+          )}
+          {messages.length > 0 && (
             <FlatList
               data={messages}
               renderItem={renderMessage}
@@ -980,7 +1664,7 @@ const ChatScreen: React.FC = () => {
           {isLoading && (
             <View style={styles.loadingBar}>
               <ActivityIndicator size="small" color="#007AFF" />
-              <Text style={styles.loadingText}>JARVIS is thinking...</Text>
+              <Text style={styles.loadingText}>JEETU is thinking...</Text>
             </View>
           )}
 
@@ -993,6 +1677,15 @@ const ChatScreen: React.FC = () => {
               editable={!isRecording && !isLoading}
               multiline
             />
+            
+            {/* Voice Input Button */}
+            <VoiceInputButton
+              onTranscription={(text) => {
+                setTextInput(text);
+              }}
+              isDisabled={isLoading || isRecording}
+            />
+            
             <TouchableOpacity
               style={[styles.sendButton, !textInput.trim() && styles.sendButtonDisabled]}
               onPress={sendTextMessage}
@@ -1029,6 +1722,119 @@ const ChatScreen: React.FC = () => {
           </View>
         </View>
       )}
+
+      {/* Contact Picker Modal */}
+      <Modal
+        visible={showContactPicker}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowContactPicker(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Add Group Members</Text>
+              <TouchableOpacity onPress={() => setShowContactPicker(false)}>
+                <Ionicons name="close" size={24} color="#666" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Search Bar */}
+            <View style={styles.searchContainer}>
+              <Ionicons name="search" size={20} color="#999" style={styles.searchIcon} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search contacts..."
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                placeholderTextColor="#999"
+              />
+            </View>
+
+            {/* Selected Members */}
+            {groupPlanMembers.length > 0 && (
+              <View style={styles.selectedMembersContainer}>
+                <Text style={styles.selectedMembersTitle}>Selected ({groupPlanMembers.length}):</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.selectedMembersList}>
+                  {groupPlanMembers.map((member) => (
+                    <View key={member.id} style={styles.selectedMemberChip}>
+                      <Text style={styles.selectedMemberName}>{member.name}</Text>
+                      <TouchableOpacity onPress={() => removeGroupMember(member.id)}>
+                        <Ionicons name="close-circle" size={18} color="#667EEA" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
+
+            {/* Contacts List */}
+            {loadingContacts ? (
+              <View style={styles.emptyContactsList}>
+                <ActivityIndicator size="large" color="#667EEA" />
+                <Text style={styles.emptyContactsText}>Loading contacts...</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={contacts.filter((c: Contact) => 
+                  c.name.toLowerCase().includes(searchQuery.toLowerCase())
+                )}
+                keyExtractor={(item) => item.id}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.contactItem}
+                    onPress={() => handleContactSelect(item)}
+                  >
+                    <View style={styles.contactAvatar}>
+                      <Text style={styles.contactAvatarText}>
+                        {item.name.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={styles.contactInfo}>
+                      <Text style={styles.contactName}>{item.name}</Text>
+                      <Text style={styles.contactDetail}>
+                        {item.phoneNumbers?.[0]?.number || item.emails?.[0]?.email || 'No contact info'}
+                      </Text>
+                    </View>
+                    {groupPlanMembers.some(m => m.id === item.id) && (
+                      <Ionicons name="checkmark-circle" size={24} color="#34C759" />
+                    )}
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={
+                  <View style={styles.emptyContactsList}>
+                    <Ionicons name="people-outline" size={48} color="#CCCCCC" />
+                    <Text style={styles.emptyContactsText}>
+                      {searchQuery ? 'No contacts found' : 'No contacts available'}
+                    </Text>
+                  </View>
+                }
+                style={styles.contactsList}
+                contentContainerStyle={contacts.length === 0 ? styles.emptyContactsContainer : undefined}
+              />
+            )}
+
+            {/* Action Buttons */}
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={() => setShowContactPicker(false)}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.startPlanButton, groupPlanMembers.length === 0 && styles.disabledButton]}
+                onPress={startGroupPlanningSession}
+                disabled={groupPlanMembers.length === 0}
+              >
+                <Text style={styles.startPlanButtonText}>
+                  Start Planning ({groupPlanMembers.length})
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 };
@@ -1052,7 +1858,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 0) + 12 : 12,
     paddingBottom: 12,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
@@ -1087,6 +1893,49 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#007AFF',
+  },
+  groupPlanButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: '#667EEA',
+    borderRadius: 20,
+    marginRight: 8,
+  },
+  groupPlanText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  exitGroupButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#FFF0F0',
+    borderRadius: 16,
+    marginRight: 8,
+  },
+  exitGroupText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FF3B30',
+  },
+  groupModeIndicator: {
+    backgroundColor: '#F0F5FF',
+    borderBottomWidth: 2,
+    borderBottomColor: '#667EEA',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  groupModeText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#667EEA',
+    textAlign: 'center',
   },
   newChatButton: {
     padding: 8,
@@ -1729,6 +2578,262 @@ const styles = StyleSheet.create({
   },
   createActionButtonTextDisabled: {
     color: '#999',
+  },
+  upgradeContainer: {
+    flex: 1,
+    backgroundColor: '#fff',
+    padding: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  upgradeEmoji: {
+    fontSize: 72,
+    marginBottom: 20,
+  },
+  upgradeTitle: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#1f2937',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  upgradeDescription: {
+    fontSize: 16,
+    color: '#6b7280',
+    marginBottom: 32,
+    textAlign: 'center',
+    paddingHorizontal: 20,
+    lineHeight: 24,
+  },
+  upgradeFeatureTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 16,
+    alignSelf: 'flex-start',
+    width: '100%',
+  },
+  featureList: {
+    width: '100%',
+    marginBottom: 32,
+  },
+  featureItem: {
+    fontSize: 16,
+    color: '#4b5563',
+    marginBottom: 12,
+    paddingLeft: 8,
+  },
+  upgradeCTA: {
+    backgroundColor: '#667eea',
+    paddingVertical: 16,
+    paddingHorizontal: 48,
+    borderRadius: 12,
+    shadowColor: '#667eea',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
+    marginBottom: 16,
+  },
+  upgradeCTAText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  trialNote: {
+    fontSize: 14,
+    color: '#9ca3af',
+    fontStyle: 'italic',
+  },
+  // Group Planning Styles
+  headerRightGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  shareButton: {
+    padding: 8,
+    backgroundColor: '#F0F5FF',
+    borderRadius: 20,
+    marginRight: 4,
+  },
+  shareButtonWithText: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#F0F5FF',
+    borderRadius: 16,
+    marginRight: 8,
+  },
+  shareButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#667EEA',
+  },
+  // Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContainer: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '85%',
+    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#000',
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+    marginHorizontal: 16,
+    marginTop: 16,
+    marginBottom: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 16,
+    color: '#000',
+  },
+  selectedMembersContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#F9F9F9',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  selectedMembersTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#667EEA',
+    marginBottom: 8,
+  },
+  selectedMembersList: {
+    flexDirection: 'row',
+  },
+  selectedMemberChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginRight: 8,
+    gap: 6,
+  },
+  selectedMemberName: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#667EEA',
+  },
+  contactsList: {
+    flex: 1,
+    maxHeight: 400,
+  },
+  emptyContactsList: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 60,
+  },
+  emptyContactsText: {
+    fontSize: 16,
+    color: '#999',
+    marginTop: 12,
+  },
+  emptyContactsContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  contactItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  contactAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#667EEA',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  contactAvatarText: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  contactInfo: {
+    flex: 1,
+  },
+  contactName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000',
+    marginBottom: 4,
+  },
+  contactDetail: {
+    fontSize: 14,
+    color: '#666',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    gap: 12,
+  },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  cancelButton: {
+    backgroundColor: '#F5F5F5',
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#666',
+  },
+  startPlanButton: {
+    backgroundColor: '#667EEA',
+  },
+  startPlanButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  disabledButton: {
+    backgroundColor: '#CCCCCC',
   },
 });
 

@@ -3,6 +3,8 @@
 import { Platform } from 'react-native';
 import StorageService from './StorageService';
 import AIService from './AIService';
+import LanguageService from './LanguageService';
+
 import { GROQ_API_KEY } from '../config/env';
 
 // Conditionally import expo-speech only on native platforms
@@ -31,6 +33,9 @@ export interface ChatSession {
   messages: ChatMessage[];
   createdAt: string;
   updatedAt: string;
+  contextMemoId?: string; // Link to a specific memo for context-aware chat
+  contextTaskId?: string; // Link to a specific task for context-aware chat
+  chatMode?: 'general' | 'task-focused' | 'planning'; // Chat mode for different behaviors
 }
 
 class ChatService {
@@ -39,15 +44,31 @@ class ChatService {
   private apiEndpoint: string = 'https://api.groq.com/openai/v1/chat/completions';
 
   constructor() {
-    console.log('=== ChatService Initialized ===');
-    console.log('API Key present:', !!this.apiKey);
-    console.log('Using fetch-based implementation for React Native compatibility');
+    if (__DEV__) {
+      console.log('=== ChatService Initialized ===');
+      console.log('🔑 API Key status:', GROQ_API_KEY ? `Present (${GROQ_API_KEY.substring(0, 15)}...)` : '❌ MISSING');
+    }
+    
+    if (!this.apiKey) {
+      console.error('❌ CRITICAL: GROQ API KEY IS MISSING!');
+      console.error('   Please check your .env.local file');
+      console.error('   Make sure EXPO_PUBLIC_GROQ_API_KEY is set');
+      console.error('   You may need to restart with: npx expo start --clear');
+    }
   }
 
   /**
    * Create a new chat session
    */
-  async createSession(userId: string, title: string = 'New Chat'): Promise<ChatSession> {
+  async createSession(
+    userId: string, 
+    title: string = 'New Chat',
+    options?: {
+      contextMemoId?: string;
+      contextTaskId?: string;
+      chatMode?: 'general' | 'task-focused' | 'planning';
+    }
+  ): Promise<ChatSession> {
     const session: ChatSession = {
       id: `chat_${userId}_${Date.now()}`,
       userId,
@@ -55,6 +76,9 @@ class ChatService {
       messages: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      contextMemoId: options?.contextMemoId,
+      contextTaskId: options?.contextTaskId,
+      chatMode: options?.chatMode || 'general',
     };
 
     try {
@@ -100,7 +124,9 @@ class ChatService {
 
     if (!this.apiKey) {
       console.error('❌ API key is missing');
-      throw new Error('AI service not available. Please check your connection.');
+      console.error('   This usually means the app needs to be restarted');
+      console.error('   Try: npx expo start --clear');
+      throw new Error('AI service not configured. Please restart the app.');
     }
 
     try {
@@ -119,8 +145,37 @@ class ChatService {
         content: msg.content,
       }));
 
+      // Get language-aware system prompt
+      const baseSystemPrompt = LanguageService.getSystemPrompt();
+      
+      // Enhanced system prompt with scope restrictions and persona
+      const enhancedSystemPrompt = `${baseSystemPrompt}
+
+IMPORTANT RULES:
+1. You are the user's personal assistant - NEVER mention you're an AI, LLM, or language model
+2. Always respond in ${LanguageService.getLanguageConfig().name} language
+3. Be warm, friendly, and conversational like a human assistant
+4. Stay focused on helping with tasks, reminders, planning, and productivity
+5. If asked about unrelated topics (weather, general knowledge, Memovox app details, etc.), politely decline:
+   - Say: "Sorry! I can't answer that. Let's focus on your tasks and planning."
+6. When planning, proactively ask clarifying questions if information is missing:
+   - Missing time? Ask: "What time works best for you?"
+   - Vague date? Ask: "Which day are you thinking - this week or next?"
+   - Unclear details? Ask for specifics before finalizing
+7. Before finalizing plans, summarize and confirm with the user
+8. Be proactive - suggest improvements and alternatives when appropriate`;
+
+      // Add system message at the beginning
+      const messagesWithSystem = [
+        {
+          role: 'system' as const,
+          content: enhancedSystemPrompt,
+        },
+        ...conversationHistory,
+      ];
+
       // Add current user message
-      conversationHistory.push({
+      messagesWithSystem.push({
         role: 'user' as const,
         content: userMessage,
       });
@@ -138,7 +193,7 @@ class ChatService {
           model: 'llama-3.3-70b-versatile',
           max_tokens: 1024,
           temperature: 0.7,
-          messages: conversationHistory,
+          messages: messagesWithSystem, // Use enhanced messages with system prompt
         }),
       });
 
@@ -249,6 +304,143 @@ class ChatService {
    */
   clearSession(): void {
     this.currentSession = null;
+  }
+
+  /**
+   * Generate a warm, context-aware greeting for task-specific chat
+   * This creates a personalized introduction when user clicks "Insight" on a task
+   */
+  async generateTaskContextGreeting(taskContext: {
+    title: string;
+    transcription?: string;
+    category?: string;
+    type?: string;
+    dueDate?: string;
+    aiAnalysis?: any;
+  }): Promise<string> {
+    const language = LanguageService.getLanguageConfig().name;
+    
+    // Build context-aware greeting
+    let greeting = '';
+    
+    // Warm opening
+    if (language === 'English') {
+      greeting = `Hello! I'm here to help you with this task. `;
+    } else if (language === 'Hindi') {
+      greeting = `नमस्ते! मैं इस कार्य में आपकी मदद के लिए यहां हूं। `;
+    } else if (language === 'Tamil') {
+      greeting = `வணக்கம்! இந்த பணியில் உங்களுக்கு உதவ நான் இங்கு இருக்கிறேன். `;
+    } else {
+      greeting = `Hello! I'm here to help you with this task. `;
+    }
+    
+    // Add task context
+    greeting += `\n\n📋 **${taskContext.title}**\n\n`;
+    
+    // Add brief summary if available
+    if (taskContext.aiAnalysis?.summary) {
+      greeting += `${taskContext.aiAnalysis.summary}\n\n`;
+    } else if (taskContext.transcription) {
+      greeting += `Based on your note: "${taskContext.transcription.substring(0, 100)}..."\n\n`;
+    }
+    
+    // Add proactive suggestion
+    greeting += `💡 **Here's what I can help with:**\n`;
+    
+    if (taskContext.type === 'event' || taskContext.type === 'reminder') {
+      greeting += `- Set up reminders or calendar events\n`;
+      greeting += `- Break down into smaller steps\n`;
+      greeting += `- Suggest optimal timing\n`;
+    } else {
+      greeting += `- Plan your approach\n`;
+      greeting += `- Create actionable steps\n`;
+      greeting += `- Answer any questions\n`;
+    }
+    
+    greeting += `\nWhat would you like to know or discuss about this?`;
+    
+    return greeting;
+  }
+
+  /**
+   * Generate proactive questions based on conversation context
+   * This helps gather more information for better planning
+   */
+  async generateProactiveQuestions(context: {
+    userMessage: string;
+    conversationHistory: ChatMessage[];
+    taskContext?: any;
+  }): Promise<string[]> {
+    const questions: string[] = [];
+    const language = LanguageService.getCurrentLanguage();
+    
+    // Analyze what information might be missing
+    const messageContent = context.userMessage.toLowerCase();
+    
+    // Time-related questions
+    if (!messageContent.match(/\b(time|hour|minute|am|pm|o'clock)\b/)) {
+      questions.push(
+        language === 'en' ? "What time works best for you?" :
+        language === 'hi' ? "आपके लिए कौन सा समय सबसे अच्छा है?" :
+        "What time works best for you?"
+      );
+    }
+    
+    // Date-related questions
+    if (messageContent.match(/\b(tomorrow|later|soon)\b/) && !messageContent.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/)) {
+      questions.push(
+        language === 'en' ? "Which specific day are you thinking?" :
+        language === 'hi' ? "आप कौन सा विशेष दिन सोच रहे हैं?" :
+        "Which specific day are you thinking?"
+      );
+    }
+    
+    // Location questions for events
+    if (messageContent.match(/\b(meeting|appointment|visit)\b/) && !messageContent.match(/\b(at|in|location|place)\b/)) {
+      questions.push(
+        language === 'en' ? "Where will this take place?" :
+        language === 'hi' ? "यह कहाँ होगा?" :
+        "Where will this take place?"
+      );
+    }
+    
+    // Priority/urgency questions
+    if (messageContent.match(/\b(task|work|project)\b/) && !messageContent.match(/\b(urgent|important|priority|asap)\b/)) {
+      questions.push(
+        language === 'en' ? "How urgent is this - high, medium, or low priority?" :
+        language === 'hi' ? "यह कितना जरूरी है - उच्च, मध्यम या कम प्राथमिकता?" :
+        "How urgent is this - high, medium, or low priority?"
+      );
+    }
+    
+    return questions.slice(0, 2); // Return max 2 questions to avoid overwhelming
+  }
+
+  /**
+   * Check if a user message is asking about irrelevant topics
+   * Returns true if the question is off-topic
+   */
+  isIrrelevantQuestion(message: string): boolean {
+    const lowerMessage = message.toLowerCase();
+    
+    // Topics we should not answer
+    const irrelevantPatterns = [
+      /what is memovox/i,
+      /how does memovox work/i,
+      /weather/i,
+      /news/i,
+      /joke/i,
+      /story/i,
+      /recipe/i,
+      /what are you/i,
+      /are you (an? )?(ai|robot|bot|llm|language model)/i,
+      /who created you/i,
+      /who made you/i,
+      /sports|football|cricket|game score/i,
+      /stock market|bitcoin|cryptocurrency/i,
+    ];
+    
+    return irrelevantPatterns.some(pattern => pattern.test(lowerMessage));
   }
 
   /**

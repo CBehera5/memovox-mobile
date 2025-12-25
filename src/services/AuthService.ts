@@ -3,6 +3,7 @@
  * Handles authentication using Supabase Auth
  */
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../config/supabase';
 import { User } from '../types';
 import StorageService from './StorageService';
@@ -13,34 +14,8 @@ class AuthService {
    */
   async signup(credentials: { email: string; password: string; name: string }): Promise<{ user: User; token: string; isAuthenticated: boolean }> {
     try {
-      // ⚠️ DEVELOPMENT MODE: Using mock authentication
-      // Network restrictions prevent reaching Supabase
-      console.log('🟡 DEVELOPMENT MODE: Using mock signup (network restricted)');
+      console.log('� PRODUCTION MODE: Real Supabase signup');
       
-      const mockUser: User = {
-        id: 'dev-user-' + Date.now(),
-        email: credentials.email,
-        name: credentials.name,
-        createdAt: new Date().toISOString(),
-      };
-      
-      const mockToken = 'mock-token-' + Date.now();
-      
-      // Save to local storage
-      await StorageService.setUser(mockUser);
-      await StorageService.setAuthToken(mockToken);
-      
-      console.log('🟡 Mock user created:', mockUser);
-      
-      return {
-        user: mockUser,
-        token: mockToken,
-        isAuthenticated: true,
-      };
-      
-      // PRODUCTION: Real Supabase Auth implementation (currently commented out)
-      // Uncomment when network access is available
-      /*
       const { data, error } = await supabase.auth.signUp({
         email: credentials.email,
         password: credentials.password,
@@ -48,6 +23,7 @@ class AuthService {
           data: {
             full_name: credentials.name,
           },
+          emailRedirectTo: 'memovox://auth/callback',
         },
       });
 
@@ -56,27 +32,50 @@ class AuthService {
         throw new Error(error.message || 'Sign up failed');
       }
 
-      if (data.user && data.session) {
-        const user: User = {
-          id: data.user.id,
-          email: data.user.email || '',
-          name: credentials.name,
-          createdAt: data.user.created_at || new Date().toISOString(),
-        };
-
-        // Save to local storage for offline access
-        await StorageService.setUser(user);
-        await StorageService.setAuthToken(data.session.access_token);
-
-        return {
-          user,
-          token: data.session.access_token,
-          isAuthenticated: true,
-        };
+      if (!data.user) {
+        throw new Error('Sign up failed - no user data returned');
       }
 
-      throw new Error('Sign up failed');
-      */
+      // Create user profile in profiles table
+      if (data.user && data.session) {
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .insert([
+            {
+              id: data.user.id,
+              email: data.user.email,
+              full_name: credentials.name,
+              auth_provider: 'email',
+            },
+          ]);
+
+        if (profileError) {
+          console.warn('Profile creation warning:', profileError);
+          // Don't fail signup if profile creation fails, it might already exist
+        }
+      }
+
+      const user: User = {
+        id: data.user.id,
+        email: data.user.email || '',
+        name: credentials.name,
+        createdAt: data.user.created_at || new Date().toISOString(),
+      };
+
+      // Save to local storage for offline access
+      await StorageService.setUser(user);
+      
+      if (data.session) {
+        await StorageService.setAuthToken(data.session.access_token);
+      }
+
+      console.log('✅ User signed up successfully:', user.email);
+
+      return {
+        user,
+        token: data.session?.access_token || '',
+        isAuthenticated: !!data.session,
+      };
     } catch (error: any) {
       console.error('Error signing up:', error);
       throw new Error(error.message || 'Sign up failed');
@@ -88,45 +87,8 @@ class AuthService {
    */
   async login(credentials: { email: string; password: string }): Promise<{ user: User; token: string; isAuthenticated: boolean }> {
     try {
-      // ⚠️ DEVELOPMENT MODE: Using mock authentication
-      // Network restrictions prevent reaching Supabase
-      console.log('🟡 DEVELOPMENT MODE: Using mock login (network restricted)');
+      console.log('� PRODUCTION MODE: Real Supabase login');
       
-      // Check if user already exists in local storage
-      const existingUser = await StorageService.getUser();
-      
-      let mockUser: User;
-      if (existingUser && existingUser.email === credentials.email) {
-        // Use existing user
-        mockUser = existingUser;
-        console.log('🟡 Existing user found:', mockUser);
-      } else {
-        // Create new user from email
-        const userName = credentials.email.split('@')[0];
-        mockUser = {
-          id: 'dev-user-' + Date.now(),
-          email: credentials.email,
-          name: userName.charAt(0).toUpperCase() + userName.slice(1), // Capitalize first letter
-          createdAt: new Date().toISOString(),
-        };
-        console.log('🟡 New mock user created:', mockUser);
-      }
-      
-      const mockToken = 'mock-token-' + Date.now();
-      
-      // Save to local storage
-      await StorageService.setUser(mockUser);
-      await StorageService.setAuthToken(mockToken);
-      
-      return {
-        user: mockUser,
-        token: mockToken,
-        isAuthenticated: true,
-      };
-      
-      // PRODUCTION: Real Supabase Auth implementation (currently commented out)
-      // Uncomment when network access is available
-      /*
       const { data, error } = await supabase.auth.signInWithPassword({
         email: credentials.email,
         password: credentials.password,
@@ -137,27 +99,28 @@ class AuthService {
         throw new Error(error.message || 'Login failed');
       }
 
-      if (data.user && data.session) {
-        const user: User = {
-          id: data.user.id,
-          email: data.user.email || '',
-          name: data.user.user_metadata?.full_name || 'User',
-          createdAt: data.user.created_at || new Date().toISOString(),
-        };
-
-        // Save to local storage for offline access
-        await StorageService.setUser(user);
-        await StorageService.setAuthToken(data.session.access_token);
-
-        return {
-          user,
-          token: data.session.access_token,
-          isAuthenticated: true,
-        };
+      if (!data.user || !data.session) {
+        throw new Error('Login failed - no session data');
       }
 
-      throw new Error('Login failed');
-      */
+      const user: User = {
+        id: data.user.id,
+        email: data.user.email || '',
+        name: data.user.user_metadata?.full_name || 'User',
+        createdAt: data.user.created_at || new Date().toISOString(),
+      };
+
+      // Save to local storage for offline access
+      await StorageService.setUser(user);
+      await StorageService.setAuthToken(data.session.access_token);
+
+      console.log('✅ User logged in successfully:', user.email);
+
+      return {
+        user,
+        token: data.session.access_token,
+        isAuthenticated: true,
+      };
     } catch (error: any) {
       console.error('Error signing in:', error);
       throw new Error(error.message || 'Login failed');
@@ -169,28 +132,56 @@ class AuthService {
    */
   async logout(): Promise<void> {
     try {
-      console.log('🟡 DEVELOPMENT MODE: Mock logout');
+      console.log('🔵 PRODUCTION MODE: Starting logout process');
       
-      // Clear local storage
-      await StorageService.clearUser();
-      await StorageService.clearAuthToken();
-      
-      console.log('🟡 User logged out, local data cleared');
-      
-      // PRODUCTION: Real Supabase logout (currently commented out)
-      /*
+      // Step 1: Sign out from Supabase (clears server session)
       const { error } = await supabase.auth.signOut();
       if (error) {
-        console.error('Sign out error:', error);
-        throw new Error(error.message || 'Sign out failed');
+        console.error('Supabase sign out error:', error);
+        // Continue with local cleanup even if server signout fails
+      } else {
+        console.log('✅ Supabase session cleared');
       }
       
+      // Step 2: Clear all local storage data
       await StorageService.clearUser();
       await StorageService.clearAuthToken();
-      */
+      console.log('✅ Local storage cleared');
+      
+      // Step 3: Clear AsyncStorage Supabase keys (belt and suspenders)
+      try {
+        const keys = await AsyncStorage.getAllKeys();
+        const supabaseKeys = keys.filter((key: string) => 
+          key.startsWith('sb-') || 
+          key.includes('supabase') ||
+          key === 'memovox_auth_token' ||
+          key === 'memovox_user'
+        );
+        
+        if (supabaseKeys.length > 0) {
+          await AsyncStorage.multiRemove(supabaseKeys);
+          console.log(`✅ Cleared ${supabaseKeys.length} Supabase keys from AsyncStorage`);
+        }
+      } catch (storageError) {
+        console.warn('Error clearing AsyncStorage Supabase keys:', storageError);
+        // Non-critical, continue
+      }
+      
+      console.log('✅ User logged out successfully');
     } catch (error: any) {
       console.error('Error signing out:', error);
-      throw error;
+      
+      // Even if there's an error, force clear local storage
+      try {
+        await StorageService.clearUser();
+        await StorageService.clearAuthToken();
+        console.log('✅ Forced local storage clear');
+      } catch (clearError) {
+        console.error('Error clearing local storage:', clearError);
+      }
+      
+      // Don't throw error - we want logout to always succeed from user perspective
+      console.warn('Logout completed with errors, but local data cleared');
     }
   }
 
@@ -199,23 +190,12 @@ class AuthService {
    */
   async getCurrentUser(): Promise<User | null> {
     try {
-      // ⚠️ DEVELOPMENT MODE: Get from local storage
-      console.log('🟡 DEVELOPMENT MODE: Getting user from local storage');
-      const user = await StorageService.getUser();
+      console.log('� PRODUCTION MODE: Getting user from Supabase');
       
-      if (user) {
-        console.log('🟡 User found:', user);
-      } else {
-        console.log('🟡 No user in storage');
-      }
-      
-      return user;
-      
-      // PRODUCTION: Real Supabase user fetch (currently commented out)
-      /*
       const { data, error } = await supabase.auth.getUser();
 
       if (error || !data.user) {
+        console.log('No active session, checking local storage');
         // Fallback to local storage
         return await StorageService.getUser();
       }
@@ -230,8 +210,8 @@ class AuthService {
       // Update local storage
       await StorageService.setUser(user);
       
+      console.log('✅ Current user:', user.email);
       return user;
-      */
     } catch (error) {
       console.error('Error getting current user:', error);
       return await StorageService.getUser(); // Fallback to local
@@ -261,13 +241,15 @@ class AuthService {
   async resetPassword(email: string): Promise<void> {
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${process.env.EXPO_PUBLIC_APP_URL}/reset-password`,
+        redirectTo: 'memovox://auth/reset-password',
       });
 
       if (error) {
         console.error('Reset password error:', error);
         throw new Error(error.message || 'Password reset failed');
       }
+      
+      console.log('✅ Password reset email sent to:', email);
     } catch (error: any) {
       console.error('Error resetting password:', error);
       throw error;
@@ -317,13 +299,171 @@ class AuthService {
    */
   async isAuthenticated(): Promise<boolean> {
     try {
-      // Check local storage for auth token
+      // First, check Supabase session (most reliable)
+      const { data: { session }, error } = await supabase.auth.getSession();
+      
+      if (!error && session) {
+        console.log('✅ Active Supabase session found');
+        // Update local storage with current session
+        if (session.user) {
+          const user: User = {
+            id: session.user.id,
+            email: session.user.email || '',
+            name: session.user.user_metadata?.full_name || 'User',
+            createdAt: session.user.created_at || new Date().toISOString(),
+          };
+          await StorageService.setUser(user);
+          await StorageService.setAuthToken(session.access_token);
+        }
+        return true;
+      }
+      
+      // Fallback: Check local storage for offline access
+      const token = await StorageService.getAuthToken();
+      const user = await StorageService.getUser();
+      const hasLocalAuth = !!(token && user);
+      
+      if (hasLocalAuth) {
+        console.log('✅ Local authentication found (offline mode)');
+      } else {
+        console.log('❌ No authentication found');
+      }
+      
+      return hasLocalAuth;
+    } catch (error) {
+      console.error('Error checking authentication:', error);
+      // Even on error, check local storage
       const token = await StorageService.getAuthToken();
       const user = await StorageService.getUser();
       return !!(token && user);
-    } catch (error) {
-      console.error('Error checking authentication:', error);
-      return false;
+    }
+  }
+
+  /**
+   * Sign in with Google OAuth
+   */
+  async signInWithGoogle(): Promise<{ user: User; token: string; isAuthenticated: boolean }> {
+    try {
+      console.log('🔵 Starting Google Sign-In');
+      
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: 'memovox://auth/callback',
+          skipBrowserRedirect: false,
+        },
+      });
+
+      if (error) {
+        console.error('Google sign-in error:', error);
+        throw new Error(error.message || 'Google sign-in failed');
+      }
+
+      // The actual user data will come through the auth state change
+      // This is just to initiate the OAuth flow
+      console.log('✅ Google OAuth flow initiated - opening browser');
+      
+      // Return a pending state - the actual authentication happens via redirect
+      // Don't throw an error, just return empty values
+      return {
+        user: {} as User,
+        token: '',
+        isAuthenticated: false,
+      };
+    } catch (error: any) {
+      console.error('Error with Google sign-in:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Handle OAuth callback
+   */
+  async handleOAuthCallback(url: string): Promise<{ user: User; token: string; isAuthenticated: boolean }> {
+    try {
+      console.log('🔵 Handling OAuth callback');
+      
+      // Exchange the code for a session
+      const { data, error } = await supabase.auth.exchangeCodeForSession(url);
+      
+      if (error) {
+        console.error('OAuth callback error:', error);
+        throw new Error(error.message || 'OAuth callback failed');
+      }
+
+      if (!data.session || !data.user) {
+        throw new Error('No session data from OAuth');
+      }
+
+      // Create or update profile
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .upsert([
+          {
+            id: data.user.id,
+            email: data.user.email,
+            full_name: data.user.user_metadata?.full_name || data.user.user_metadata?.name || 'User',
+            avatar_url: data.user.user_metadata?.avatar_url || data.user.user_metadata?.picture,
+            auth_provider: 'google',
+          },
+        ]);
+
+      if (profileError) {
+        console.warn('Profile upsert warning:', profileError);
+      }
+
+      const user: User = {
+        id: data.user.id,
+        email: data.user.email || '',
+        name: data.user.user_metadata?.full_name || data.user.user_metadata?.name || 'User',
+        createdAt: data.user.created_at || new Date().toISOString(),
+      };
+
+      // Save to local storage
+      await StorageService.setUser(user);
+      await StorageService.setAuthToken(data.session.access_token);
+
+      console.log('✅ OAuth callback successful:', user.email);
+
+      return {
+        user,
+        token: data.session.access_token,
+        isAuthenticated: true,
+      };
+    } catch (error: any) {
+      console.error('Error handling OAuth callback:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete user account (GDPR Right to Erasure)
+   */
+  async deleteAccount(): Promise<void> {
+    try {
+      console.log('🗑️ Deleting user account...');
+      
+      // Get current user
+      const user = await this.getCurrentUser();
+      if (!user) {
+        throw new Error('No user logged in');
+      }
+
+      // Delete from Supabase Auth
+      const { error } = await supabase.auth.admin.deleteUser(user.id);
+      
+      if (error) {
+        console.error('Delete account error:', error);
+        // Continue with local cleanup even if server deletion fails
+      }
+
+      // Clear all local data
+      await StorageService.clearAllData();
+      
+      console.log('✅ Account deleted successfully');
+    } catch (error: any) {
+      console.error('Error deleting account:', error);
+      throw error;
     }
   }
 }

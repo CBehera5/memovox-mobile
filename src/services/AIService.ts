@@ -4,6 +4,8 @@ import { VoiceMemo, MemoCategory, MemoType, AIAnalysis, AIServiceConfig } from '
 import StorageService from './StorageService';
 import { AI_MODELS } from '../constants';
 import Groq from 'groq-sdk';
+import LanguageService from './LanguageService';
+
 import { GROQ_API_KEY } from '../config/env';
 
 interface TranscriptionResult {
@@ -24,19 +26,25 @@ class AIService {
 
   constructor() {
     // Initialize Groq client with the API key from environment
+    if (__DEV__) {
+      console.log('🔧 AIService: Initializing...');
+      console.log('🔑 API Key status:', GROQ_API_KEY ? `Present (${GROQ_API_KEY.substring(0, 15)}...)` : '❌ MISSING');
+    }
+    
     if (this.config.apiKey) {
       try {
         this.groqClient = new Groq({
           apiKey: this.config.apiKey,
           dangerouslyAllowBrowser: true, // Required for browser/React Native
         });
-        console.log('Groq client initialized successfully');
+        if (__DEV__) console.log('✅ Groq client initialized successfully');
       } catch (error) {
-        console.error('Error initializing Groq client:', error);
+        console.error('❌ AIService: Error initializing Groq client:', error);
         this.groqClient = null;
       }
     } else {
-      console.warn('No Groq API key provided');
+      console.error('❌ No Groq API key provided - check your .env.local file!');
+      console.error('   Make sure EXPO_PUBLIC_GROQ_API_KEY is set');
     }
   }
 
@@ -103,8 +111,9 @@ class AIService {
   async transcribeAudio(audioUri: string): Promise<string> {
     // Use Groq Whisper API to transcribe the actual audio
     if (!this.groqClient) {
-      console.warn('Groq client not initialized, cannot transcribe');
-      return 'Unable to transcribe audio - Groq client not available';
+      console.error('❌ Groq client not initialized - API key missing!');
+      console.error('Current API key:', this.config.apiKey ? 'Present (length: ' + this.config.apiKey.length + ')' : 'Missing');
+      throw new Error('AI service is not configured. Please check your API key in settings or environment variables.');
     }
 
     try {
@@ -127,11 +136,11 @@ class AIService {
         console.log('Fetching remote URL and converting to FormData entry...');
         const response = await fetch(audioUri);
         const blob = await response.blob();
-        formData.append('file', {
-          uri: audioUri,
-          type: 'audio/mp4',
-          name: 'audio.m4a',
-        } as any);
+        console.log('Blob fetched, size:', blob.size, 'type:', blob.type);
+        
+        // Create a File object from the blob for better compatibility
+        const file = new File([blob], 'audio.m4a', { type: blob.type || 'audio/mp4' });
+        formData.append('file', file as any);
       } else if (audioUri.startsWith('data:audio/')) {
         console.log('Converting data URI to FormData entry...');
         const base64Data = audioUri.split(',')[1];
@@ -150,12 +159,19 @@ class AIService {
         throw new Error('Unsupported audio URI format');
       }
       
+      // Get user's preferred language for transcription
+      const userLanguage = LanguageService.getCurrentLanguage();
+      const languageCode = userLanguage === 'en' ? 'en' : userLanguage; // Groq supports all these languages
+      
       // Add other required parameters
       formData.append('model', 'whisper-large-v3-turbo');
-      formData.append('language', 'en');
+      formData.append('language', languageCode); // Use user's selected language
       formData.append('response_format', 'text');
 
-      console.log('Sending request to Groq API...');
+      if (__DEV__) {
+        console.log('Sending request to Groq API with language:', languageCode);
+        console.log('🔑 API Key status:', this.config.apiKey ? `Present (length: ${this.config.apiKey.length})` : '❌ MISSING');
+      }
       
       // Use native fetch instead of Groq SDK for better React Native compatibility
       const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {

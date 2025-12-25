@@ -12,6 +12,11 @@ export const COLORS = {
   dark: '#1f2937',
   light: '#f3f4f6',
   white: '#ffffff',
+  // Collaboration UI colors
+  background: '#F5F5F5',
+  textPrimary: '#1A1A1A',
+  textSecondary: '#666666',
+  border: '#E0E0E0',
   gray: {
     50: '#f9fafb',
     100: '#f3f4f6',

@@ -77,6 +77,22 @@ export interface Notification {
   scheduledFor: string;
   sent: boolean;
   createdAt: string;
+  // Enhanced features
+  recurring?: {
+    enabled: boolean;
+    frequency: 'daily' | 'weekly' | 'monthly' | 'yearly';
+    interval: number; // e.g., every 2 days
+    daysOfWeek?: number[]; // 0-6 (Sunday-Saturday)
+    endDate?: string;
+  };
+  soundName?: string; // Custom notification sound
+  actionData?: {
+    actionId?: string; // Related AgentAction ID
+    canComplete?: boolean; // Show "Mark Complete" button
+    canSnooze?: boolean; // Show "Snooze" button
+  };
+  snoozedCount?: number; // Track how many times snoozed
+  originalScheduledFor?: string; // Original time before snoozes
 }
 
 export interface AuthState {
@@ -112,6 +128,16 @@ export interface AgentAction {
   createdAt: string;
   completedAt?: string;
   linkedMemoId?: string;
+  // Enhanced features
+  recurring?: {
+    enabled: boolean;
+    frequency: 'daily' | 'weekly' | 'monthly' | 'yearly';
+    interval: number;
+    daysOfWeek?: number[];
+    endDate?: string;
+  };
+  notificationSound?: string;
+  snoozeCount?: number;
 }
 
 export interface AgentSuggestion {

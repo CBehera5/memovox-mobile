@@ -2,7 +2,7 @@
 
 /**
  * LanguageService
- * Handles multi-language support for JARVIS AI
+ * Handles multi-language support for JEETU AI
  * Supports: English, Hindi, Tamil, Telugu, Kannada, Malayalam, Marathi, Gujarati, Bengali
  */
 
@@ -76,23 +76,23 @@ export const SUPPORTED_LANGUAGES: Record<SupportedLanguage, LanguageConfig> = {
 };
 
 export const LANGUAGE_SYSTEM_PROMPTS: Record<SupportedLanguage, string> = {
-  en: `You are JARVIS, a helpful AI assistant. You respond in English and help users with their tasks, reminders, and questions.`,
+  en: `You are JEETU, a helpful AI assistant. You respond in English and help users with their tasks, reminders, and questions.`,
   
-  hi: `आप JARVIS हैं, एक सहायक AI सहायक। आप हिंदी में जवाब देते हैं और उपयोगकर्ताओं को उनके कार्यों, रिमाइंडर और सवालों में मदद करते हैं।`,
+  hi: `आप JEETU हैं, एक सहायक AI सहायक। आप हिंदी में जवाब देते हैं और उपयोगकर्ताओं को उनके कार्यों, रिमाइंडर और सवालों में मदद करते हैं।`,
   
-  ta: `நீங்கள் JARVIS, ஒரு உதவிகரமான AI உதவியாளர். நீங்கள் தமிழ் மொழியில் பதிலளிக்கிறீர்கள் மற்றும் பயனர்களுக்கு அவர்களின் பணிகள், நினைவூட்டல்கள் மற்றும் கேள்விகளில் உதவுகிறீர்கள்.`,
+  ta: `நீங்கள் JEETU, ஒரு உதவிகரமான AI உதவியாளர். நீங்கள் தமிழ் மொழியில் பதிலளிக்கிறீர்கள் மற்றும் பயனர்களுக்கு அவர்களின் பணிகள், நினைவூட்டல்கள் மற்றும் கேள்விகளில் உதவுகிறீர்கள்.`,
   
-  te: `మీరు JARVIS, సహాయక AI సహాయক. మీరు తెలుగు భాషలో సమాధానం ఇస్తారు మరియు వినియోగదారులకు వారి పనులు, రిమైండర్‌లు మరియు ప్రశ్నలలో సహాయం చేస్తారు.`,
+  te: `మీరు JEETU, సహాయక AI సహాయক. మీరు తెలుగు భాషలో సమాధానం ఇస్తారు మరియు వినియోగదారులకు వారి పనులు, రిమైండర్‌లు మరియు ప్రశ్నలలో సహాయం చేస్తారు.`,
   
-  kn: `ನೀವು JARVIS, ಸಹಾಯಕ AI ಸಹಾಯಕ. ನೀವು ಕನ್ನಡ ಭಾಷೆಯಲ್ಲಿ ಉತ್ತರಿಸುತ್ತೀರಿ ಮತ್ತು ಬಳಕೆದಾರರಿಗೆ ಅವರ ಕಾರ್ಯಗಳು, ಜ್ಞಾಪನೆಗಳು ಮತ್ತು ಪ್ರಶ್ನೆಗಳಲ್ಲಿ ಸಹಾಯ ಮಾಡುತ್ತೀರಿ.`,
+  kn: `ನೀವು JEETU, ಸಹಾಯಕ AI ಸಹಾಯಕ. ನೀವು ಕನ್ನಡ ಭಾಷೆಯಲ್ಲಿ ಉತ್ತರಿಸುತ್ತೀರಿ ಮತ್ತು ಬಳಕೆದಾರರಿಗೆ ಅವರ ಕಾರ್ಯಗಳು, ಜ್ಞಾಪನೆಗಳು ಮತ್ತು ಪ್ರಶ್ನೆಗಳಲ್ಲಿ ಸಹಾಯ ಮಾಡುತ್ತೀರಿ.`,
   
-  ml: `നിങ്ങൾ JARVIS, ഒരു സഹായകമായ AI സഹായി. നിങ്ങൾ മലയാളം ഭാഷയിൽ ഉത്തരം നൽകുകയും ഉപയോക്താക്കളെ അവരുടെ ജോലികൾ, ഓർമ്മപ്പെടുത്തലുകൾ, പ്രശ്നങ്ങൾ എന്നിവയിൽ സഹായിക്കുകയും ചെയ്യുന്നു.`,
+  ml: `നിങ്ങൾ JEETU, ഒരു സഹായകമായ AI സഹായി. നിങ്ങൾ മലയാളം ഭാഷയിൽ ഉത്തരം നൽകുകയും ഉപയോക്താക്കളെ അവരുടെ ജോലികൾ, ഓർമ്മപ്പെടുത്തലുകൾ, പ്രശ്നങ്ങൾ എന്നിവയിൽ സഹായിക്കുകയും ചെയ്യുന്നു.`,
   
-  mr: `तुम JARVIS आहात, एक सहायक AI सहायक. तुम मराठीमध्ये प्रतिक्रिया देता आहात आणि वापरकर्त्यांना त्यांच्या कार्यांमध्ये, स्मरणीयांमध्ये आणि प्रश्नांमध्ये मदत करता आहात.`,
+  mr: `तुम JEETU आहात, एक सहायक AI सहायक. तुम मराठीमध्ये प्रतिक्रिया देता आहात आणि वापरकर्त्यांना त्यांच्या कार्यांमध्ये, स्मरणीयांमध्ये आणि प्रश्नांमध्ये मदत करता आहात.`,
   
-  gu: `તમે JARVIS છો, એક સહાયક AI સહાયક. તમે ગુજરાતી ભાષામાં જવાબ આપો છો અને વપરાશકર્તાઓને તેમના કાર્યો, રિમાઈન્ડર્સ અને પ્રશ્નોમાં મદદ કરો છો.`,
+  gu: `તમે JEETU છો, એક સહાયક AI સહાયક. તમે ગુજરાતી ભાષામાં જવાબ આપો છો અને વપરાશકર્તાઓને તેમના કાર્યો, રિમાઈન્ડર્સ અને પ્રશ્નોમાં મદદ કરો છો.`,
   
-  bn: `আপনি JARVIS, একটি সহায়ক AI সহায়ক। আপনি বাংলা ভাষায় উত্তর দেন এবং ব্যবহারকারীদের তাদের কাজ, রিমাইন্ডার এবং প্রশ্নে সহায়তা করেন।`,
+  bn: `আপনি JEETU, একটি সহায়ক AI সহায়ক। আপনি বাংলা ভাষায় উত্তর দেন এবং ব্যবহারকারীদের তাদের কাজ, রিমাইন্ডার এবং প্রশ্নে সহায়তা করেন।`,
 };
 
 class LanguageService {
@@ -150,7 +150,7 @@ class LanguageService {
   }
 
   /**
-   * Get system prompt for JARVIS in current language
+   * Get system prompt for JEETU in current language
    */
   getSystemPrompt(): string {
     return LANGUAGE_SYSTEM_PROMPTS[this.currentLanguage];
@@ -243,55 +243,55 @@ class LanguageService {
       en: {
         'Generating insights...': 'Generating insights...',
         'Ask More Questions': 'Ask More Questions',
-        'Chat with JARVIS': 'Chat with JARVIS',
+        'Chat with JEETU': 'Chat with JEETU',
         'Set Reminder': 'Set Reminder',
       },
       hi: {
         'Generating insights...': 'अंतर्दृष्टि उत्पन्न की जा रही है...',
         'Ask More Questions': 'और सवाल पूछें',
-        'Chat with JARVIS': 'JARVIS के साथ चैट करें',
+        'Chat with JEETU': 'JEETU के साथ चैट करें',
         'Set Reminder': 'रिमाइंडर सेट करें',
       },
       ta: {
         'Generating insights...': 'நுண்ணறிவு உருவாக்கப்படுகிறது...',
         'Ask More Questions': 'கூடுதல் கேள்விகள் கேளுங்கள்',
-        'Chat with JARVIS': 'JARVIS உடன் சேட் செய்யவும்',
+        'Chat with JEETU': 'JEETU உடன் சேட் செய்யவும்',
         'Set Reminder': 'நினைவூட்டல் அமைக்கவும்',
       },
       te: {
         'Generating insights...': 'అంతర్దృష్టులు ఉత్పత్తి చేయబడుతున్నాయి...',
         'Ask More Questions': 'మరిన్ని ప్రశ్నలను అడగండి',
-        'Chat with JARVIS': 'JARVIS తో చాట్ చేయండి',
+        'Chat with JEETU': 'JEETU తో చాట్ చేయండి',
         'Set Reminder': 'రిమైండర్‌ను సెట్ చేయండి',
       },
       kn: {
         'Generating insights...': 'ಅಂತರ್ದೃಷ್ಟಿ ಉತ್ಪಾದಿತವಾಗುತ್ತಿದೆ...',
         'Ask More Questions': 'ಹೆಚ್ಚಿನ ಪ್ರಶ್ನೆಗಳನ್ನು ಕೇಳಿ',
-        'Chat with JARVIS': 'JARVIS ನೊಂದಿಗೆ ಚ್ಯಾಟ್ ಮಾಡಿ',
+        'Chat with JEETU': 'JEETU ನೊಂದಿಗೆ ಚ್ಯಾಟ್ ಮಾಡಿ',
         'Set Reminder': 'ಜ್ಞಾಪನೆ ಹೊಂದಿಸಿ',
       },
       ml: {
         'Generating insights...': 'ഉൾക്കാഴ്ച് ഉത്പാദിപ്പിക്കുന്നു...',
         'Ask More Questions': 'കൂടുതൽ ചോദ്യങ്ങൾ ചോദിക്കുക',
-        'Chat with JARVIS': 'JARVIS ​​ഉമായി ചാറ്റ് ചെയ്യുക',
+        'Chat with JEETU': 'JEETU ഉമായി ചാറ്റ് ചെയ്യുക',
         'Set Reminder': 'ഓർമ്മപ്പെടുത്തൽ സെറ്റ് ചെയ്യുക',
       },
       mr: {
         'Generating insights...': 'अंतर्दृष्टी तयार केल्या जात आहेत...',
         'Ask More Questions': 'आणखी प्रश्न विचारा',
-        'Chat with JARVIS': 'JARVIS सह चॅट करा',
+        'Chat with JEETU': 'JEETU सह चॅट करा',
         'Set Reminder': 'स्मरणीय सेट करा',
       },
       gu: {
         'Generating insights...': 'આંતરદૃષ્ટિ ઉત્પન્ન કરવામાં આવી રહ્યો છે...',
         'Ask More Questions': 'વધુ પ્રશ્નો પૂછો',
-        'Chat with JARVIS': 'JARVIS સાથે ચેટ કરો',
+        'Chat with JEETU': 'JEETU સાથે ચેટ કરો',
         'Set Reminder': 'રીમાઈન્ડર સેટ કરો',
       },
       bn: {
         'Generating insights...': 'অন্তর্দৃষ্টি তৈরি হচ্ছে...',
         'Ask More Questions': 'আরও প্রশ্ন জিজ্ঞাসা করুন',
-        'Chat with JARVIS': 'JARVIS এর সাথে চ্যাট করুন',
+        'Chat with JEETU': 'JEETU এর সাথে চ্যাট করুন',
         'Set Reminder': 'রিমাইন্ডার সেট করুন',
       },
     };

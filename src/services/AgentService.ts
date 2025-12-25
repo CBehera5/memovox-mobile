@@ -4,6 +4,8 @@ import { AgentAction, AgentSuggestion, VoiceMemo, CompletionStats } from '../typ
 import StorageService from './StorageService';
 import AIService from './AIService';
 import Groq from 'groq-sdk';
+import { supabase } from '../config/supabase';
+
 import { GROQ_API_KEY } from '../config/env';
 
 class AgentService {
@@ -17,6 +19,7 @@ class AgentService {
         apiKey: GROQ_API_KEY,
         dangerouslyAllowBrowser: true,
       });
+      if (__DEV__) console.log('✅ AgentService: Groq client initialized');
     } catch (error) {
       console.error('Error initializing Groq client in AgentService:', error);
     }
@@ -257,15 +260,63 @@ Return ONLY valid JSON array, no additional text.`;
       today.setHours(0, 0, 0, 0);
       const todayStr = today.toISOString().split('T')[0];
 
-      return actions.filter(action => {
+      const todayActions = actions.filter(action => {
         if (action.status !== 'pending') return false;
-        if (!action.dueDate) return false;
         
-        const actionDate = this.parseActionDate(action.dueDate);
-        if (!actionDate) return false;
+        // Check dueDate first
+        if (action.dueDate) {
+          const actionDate = this.parseActionDate(action.dueDate);
+          if (actionDate) {
+            const actionDateStr = actionDate.toISOString().split('T')[0];
+            // Include if due today or overdue
+            return actionDateStr <= todayStr;
+          }
+        }
         
-        const actionDateStr = actionDate.toISOString().split('T')[0];
-        return actionDateStr === todayStr;
+        // Fallback: check dueTime if dueDate is not available
+        if (action.dueTime) {
+          try {
+            const dueDateTime = new Date(action.dueTime);
+            if (!isNaN(dueDateTime.getTime())) {
+              const dueDateStr = dueDateTime.toISOString().split('T')[0];
+              // Include if due today or overdue
+              return dueDateStr <= todayStr;
+            }
+          } catch (e) {
+            console.warn('Could not parse dueTime:', action.dueTime);
+          }
+        }
+        
+        // Include tasks without a due date (unscheduled tasks should still show up)
+        // But only show the most recent ones (created today or yesterday)
+        if (!action.dueDate && !action.dueTime) {
+          const createdAt = new Date(action.createdAt);
+          const yesterday = new Date(today);
+          yesterday.setDate(yesterday.getDate() - 1);
+          return createdAt >= yesterday; // Show recent unscheduled tasks
+        }
+        
+        return false;
+      });
+      
+      // Sort by due date/time, then priority
+      return todayActions.sort((a, b) => {
+        // First, sort by due date/time if available
+        const aDate = a.dueDate ? this.parseActionDate(a.dueDate) : null;
+        const bDate = b.dueDate ? this.parseActionDate(b.dueDate) : null;
+        
+        if (aDate && bDate) {
+          const timeDiff = aDate.getTime() - bDate.getTime();
+          if (timeDiff !== 0) return timeDiff;
+        }
+        
+        // If one has a date and the other doesn't, prioritize the one with a date
+        if (aDate && !bDate) return -1;
+        if (!aDate && bDate) return 1;
+        
+        // Sort by priority
+        const priorityOrder = { high: 0, medium: 1, low: 2 };
+        return priorityOrder[a.priority] - priorityOrder[b.priority];
       });
     } catch (error) {
       console.error('Error getting today actions:', error);
@@ -395,15 +446,51 @@ Return ONLY valid JSON array, no additional text.`;
 
       return actions.filter(action => {
         if (action.status !== 'pending') return false;
-        if (!action.dueDate) return false;
         
-        const actionDate = this.parseActionDate(action.dueDate);
-        if (!actionDate) return false;
+        // Check dueDate first
+        if (action.dueDate) {
+          const actionDate = this.parseActionDate(action.dueDate);
+          if (actionDate) {
+            return actionDate >= today && actionDate <= futureDate;
+          }
+        }
         
-        return actionDate >= today && actionDate <= futureDate;
+        // Fallback: check dueTime if dueDate is not available
+        if (action.dueTime) {
+          try {
+            const dueDateTime = new Date(action.dueTime);
+            if (!isNaN(dueDateTime.getTime())) {
+              dueDateTime.setHours(0, 0, 0, 0); // Normalize to start of day
+              return dueDateTime >= today && dueDateTime <= futureDate;
+            }
+          } catch (e) {
+            console.warn('Could not parse dueTime:', action.dueTime);
+          }
+        }
+        
+        return false;
       }).sort((a, b) => {
-        const dateA = this.parseActionDate(a.dueDate!);
-        const dateB = this.parseActionDate(b.dueDate!);
+        // Sort by date
+        let dateA: Date | null = null;
+        let dateB: Date | null = null;
+        
+        // Try dueDate first
+        if (a.dueDate) dateA = this.parseActionDate(a.dueDate);
+        if (!dateA && a.dueTime) {
+          try {
+            dateA = new Date(a.dueTime);
+            if (isNaN(dateA.getTime())) dateA = null;
+          } catch (e) { dateA = null; }
+        }
+        
+        if (b.dueDate) dateB = this.parseActionDate(b.dueDate);
+        if (!dateB && b.dueTime) {
+          try {
+            dateB = new Date(b.dueTime);
+            if (isNaN(dateB.getTime())) dateB = null;
+          } catch (e) { dateB = null; }
+        }
+        
         if (!dateA || !dateB) return 0;
         return dateA.getTime() - dateB.getTime();
       });
@@ -463,6 +550,46 @@ Return ONLY valid JSON array, no additional text.`;
     } catch (error) {
       console.error('Error getting smart suggestions:', error);
       return [];
+    }
+  }
+
+  /**
+   * Update action status (for notifications)
+   */
+  async updateActionStatus(actionId: string, status: 'pending' | 'completed' | 'cancelled', userId?: string): Promise<AgentAction | null> {
+    try {
+      // Get all actions from Supabase
+      const { data: actions, error } = await supabase
+        .from('agent_actions')
+        .select('*')
+        .eq('id', actionId)
+        .single();
+      
+      if (error || !actions) {
+        console.error('Action not found:', actionId);
+        return null;
+      }
+
+      // Update the action
+      const { data: updatedAction, error: updateError } = await supabase
+        .from('agent_actions')
+        .update({
+          status,
+          completedAt: status === 'completed' ? new Date().toISOString() : null,
+        })
+        .eq('id', actionId)
+        .select()
+        .single();
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      if (__DEV__) console.log(`✅ Action ${actionId} status updated to: ${status}`);
+      return updatedAction as AgentAction;
+    } catch (error) {
+      console.error('Error updating action status:', error);
+      return null;
     }
   }
 }

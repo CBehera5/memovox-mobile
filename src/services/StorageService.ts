@@ -390,6 +390,82 @@ export class StorageService {
       console.error(`Error removing item ${key}:`, error);
     }
   }
+
+  /**
+   * Clear all app data (use with caution!)
+   */
+  async clearAllData(): Promise<void> {
+    try {
+      console.log('🗑️ Clearing all app data...');
+      const keys = [
+        this.AUTH_TOKEN_KEY,
+        this.USER_KEY,
+        this.VOICE_MEMOS_KEY,
+        this.AI_CONFIG_KEY,
+        this.USER_PERSONA_KEY,
+        this.CHAT_SESSIONS_KEY,
+        'memovox_privacy_preferences',
+      ];
+      await AsyncStorage.multiRemove(keys);
+      console.log('✅ All app data cleared');
+    } catch (error) {
+      console.error('Error clearing all data:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Save privacy preferences (GDPR/CCPA compliance)
+   */
+  async savePrivacyPreferences(preferences: any): Promise<void> {
+    try {
+      await AsyncStorage.setItem(
+        'memovox_privacy_preferences',
+        JSON.stringify(preferences)
+      );
+    } catch (error) {
+      console.error('Error saving privacy preferences:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get privacy preferences
+   */
+  async getPrivacyPreferences(): Promise<any | null> {
+    try {
+      const prefs = await AsyncStorage.getItem('memovox_privacy_preferences');
+      return prefs ? JSON.parse(prefs) : null;
+    } catch (error) {
+      console.error('Error getting privacy preferences:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get notification preferences
+   */
+  async getNotificationPreferences(): Promise<any | null> {
+    try {
+      const prefs = await AsyncStorage.getItem('memovox_notification_preferences');
+      return prefs ? JSON.parse(prefs) : null;
+    } catch (error) {
+      console.error('Error getting notification preferences:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Save notification preferences
+   */
+  async saveNotificationPreferences(preferences: any): Promise<void> {
+    try {
+      await AsyncStorage.setItem('memovox_notification_preferences', JSON.stringify(preferences));
+    } catch (error) {
+      console.error('Error saving notification preferences:', error);
+      throw error;
+    }
+  }
 }
 
 export const storageService = new StorageService();

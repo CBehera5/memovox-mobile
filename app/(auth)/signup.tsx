@@ -27,6 +27,7 @@ export default function Signup() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   const handleSignup = async () => {
     if (!name || !email || !password || !confirmPassword) {
@@ -52,11 +53,42 @@ export default function Signup() {
     setLoading(true);
     try {
       await AuthService.signup({ name, email, password });
-      router.replace('/(tabs)/home');
+      Alert.alert(
+        'Success!',
+        'Account created successfully. Please check your email to verify your account.',
+        [
+          {
+            text: 'OK',
+            onPress: () => router.replace('/(onboarding)/welcome'),
+          },
+        ]
+      );
     } catch (error: any) {
       Alert.alert('Signup Failed', error.message || 'An error occurred');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setGoogleLoading(true);
+    try {
+      await AuthService.signInWithGoogle();
+      // OAuth flow will open browser - this is expected behavior
+      // The app will receive the callback via deep link
+      // Don't show an error - the user will be redirected back after signing in
+    } catch (error: any) {
+      // Only show error if it's a real error (not the OAuth redirect)
+      const errorMsg = error.message || '';
+      if (!errorMsg.includes('OAuth') && 
+          !errorMsg.includes('redirect') && 
+          !errorMsg.includes('initiated')) {
+        Alert.alert('Error', 'Failed to start Google sign-in. Please try again.');
+      }
+      // If it's an OAuth flow message, just ignore it - this is normal
+    } finally {
+      // Keep loading state for a moment to show the transition
+      setTimeout(() => setGoogleLoading(false), 1000);
     }
   };
 
@@ -76,6 +108,27 @@ export default function Signup() {
               </View>
 
               <View style={styles.form}>
+                <TouchableOpacity
+                  style={styles.googleButton}
+                  onPress={handleGoogleSignIn}
+                  disabled={googleLoading}
+                >
+                  {googleLoading ? (
+                    <ActivityIndicator color={COLORS.dark} />
+                  ) : (
+                    <View style={styles.googleButtonContent}>
+                      <Text style={styles.googleIcon}>🔵</Text>
+                      <Text style={styles.googleButtonText}>Continue with Google</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+
+                <View style={styles.divider}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>OR</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+
                 <View style={styles.inputContainer}>
                   <TextInput
                     style={styles.input}
@@ -163,10 +216,9 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
+    justifyContent: 'center',
   },
   content: {
-    flex: 1,
-    justifyContent: 'center',
     padding: 24,
   },
   header: {
@@ -189,10 +241,50 @@ const styles = StyleSheet.create({
     opacity: 0.9,
   },
   form: {
+    gap: 16,
+  },
+  googleButton: {
+    backgroundColor: COLORS.white,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.gray[200],
+    marginBottom: 8,
+  },
+  googleButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 12,
   },
+  googleIcon: {
+    fontSize: 20,
+  },
+  googleButtonText: {
+    color: COLORS.dark,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 20,
+    gap: 12,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: COLORS.white,
+    opacity: 0.3,
+  },
+  dividerText: {
+    color: COLORS.white,
+    fontSize: 14,
+    fontWeight: '600',
+    opacity: 0.7,
+  },
   inputContainer: {
-    marginBottom: 12,
+    marginBottom: 16,
   },
   input: {
     backgroundColor: COLORS.white,
@@ -212,7 +304,7 @@ const styles = StyleSheet.create({
   buttonText: {
     color: COLORS.primary,
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: 'bold',
   },
   footer: {
     flexDirection: 'row',
@@ -221,12 +313,12 @@ const styles = StyleSheet.create({
   },
   footerText: {
     color: COLORS.white,
-    fontSize: 14,
+    fontSize: 16,
   },
   link: {
     color: COLORS.white,
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: 'bold',
     textDecorationLine: 'underline',
   },
 });

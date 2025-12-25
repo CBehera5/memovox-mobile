@@ -2,29 +2,35 @@
 
 import { Tabs } from 'expo-router';
 import { COLORS } from '../../src/constants';
-import { Text } from 'react-native';
+import { Text, Platform } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 export default function TabsLayout() {
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: COLORS.primary,
-        tabBarInactiveTintColor: COLORS.gray[400],
-        tabBarStyle: {
-          backgroundColor: COLORS.white,
-          borderTopWidth: 1,
-          borderTopColor: COLORS.gray[200],
-          paddingBottom: 8,
-          paddingTop: 8,
-          height: 60,
-        },
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: '600',
-        },
-      }}
-    >
+    <SafeAreaProvider>
+      <Tabs
+        screenOptions={{
+          headerShown: false,
+          tabBarActiveTintColor: COLORS.primary,
+          tabBarInactiveTintColor: COLORS.gray[400],
+          tabBarStyle: {
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            backgroundColor: COLORS.white,
+            borderTopWidth: 1,
+            borderTopColor: COLORS.gray[200],
+            paddingBottom: Platform.OS === 'android' ? 12 : 8,
+            paddingTop: 8,
+            height: Platform.OS === 'android' ? 70 : 60,
+          },
+          tabBarLabelStyle: {
+            fontSize: 12,
+            fontWeight: '600',
+          },
+        }}
+      >
       <Tabs.Screen
         name="home"
         options={{
@@ -46,7 +52,7 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="chat"
         options={{
-          title: "Let's plan",
+          title: "Plan with AI",
           tabBarIcon: ({ color, size }) => (
             <TabIcon name="💬" color={color} />
           ),
@@ -64,13 +70,29 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="profile"
         options={{
-          title: 'Profile',
-          tabBarIcon: ({ color, size}) => (
-            <TabIcon name="👤" color={color} />
-          ),
+          href: null, // Hide from tab bar
+        }}
+      />
+      <Tabs.Screen
+        name="privacy"
+        options={{
+          href: null, // Hide from tab bar
+        }}
+      />
+      <Tabs.Screen
+        name="notifications"
+        options={{
+          href: null, // Hide from tab bar
+        }}
+      />
+      <Tabs.Screen
+        name="about"
+        options={{
+          href: null, // Hide from tab bar
         }}
       />
     </Tabs>
+    </SafeAreaProvider>
   );
 }
 

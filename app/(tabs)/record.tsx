@@ -22,15 +22,22 @@ import AgentService from '../../src/services/AgentService';
 import StorageService from '../../src/services/StorageService';
 import NotificationService from '../../src/services/NotificationService';
 import PersonaService from '../../src/services/PersonaService';
+import SubscriptionService from '../../src/services/SubscriptionService';
 import { VoiceMemo } from '../../src/types';
 import { COLORS, GRADIENTS, EXAMPLE_PROMPTS, TYPE_BADGES, CATEGORY_COLORS } from '../../src/constants';
 import { generateId } from '../../src/utils';
+import UsageLimitWarning from '../../src/components/UsageLimitWarning';
 
 export default function Record() {
   const [isRecording, setIsRecording] = useState(false);
   const [duration, setDuration] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [usageStats, setUsageStats] = useState<any>(null);
+
+  useEffect(() => {
+    loadUsageStats();
+  }, []);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -47,8 +54,35 @@ export default function Record() {
     };
   }, [isRecording]);
 
+  const loadUsageStats = async () => {
+    try {
+      const stats = await SubscriptionService.getUsageStats();
+      setUsageStats(stats);
+    } catch (error) {
+      console.error('Failed to load usage stats:', error);
+    }
+  };
+
   const handleStartRecording = async () => {
     try {
+      // Check usage limit before recording
+      const canCreate = await SubscriptionService.canCreateVoiceMemo();
+      
+      if (!canCreate) {
+        Alert.alert(
+          '🚫 Limit Reached',
+          'You\'ve reached your monthly limit of voice memos. Upgrade to Premium for unlimited recordings!',
+          [
+            { text: 'Not Now', style: 'cancel' },
+            { text: 'Upgrade', onPress: () => {
+              // Navigate to profile with upgrade modal
+              // Since we can't use router here, we'll just show the alert
+            }}
+          ]
+        );
+        return;
+      }
+
       await AudioService.startRecording();
       setIsRecording(true);
       setResult(null);
@@ -234,6 +268,12 @@ export default function Record() {
       const allMemos = await VoiceMemoService.getUserMemos(user.id);
       await PersonaService.updatePersona(user.id, allMemos);
 
+      // Track usage
+      await SubscriptionService.trackVoiceMemoCreation();
+      
+      // Reload usage stats
+      await loadUsageStats();
+
       // Show result
       setResult(analysis);
       setDuration(0);
@@ -311,6 +351,15 @@ export default function Record() {
             AI-powered transcription & organization
           </Text>
         </LinearGradient>
+
+        {/* Usage Limit Warning */}
+        {usageStats && (
+          <UsageLimitWarning
+            currentUsage={usageStats.voiceMemosUsed}
+            limit={usageStats.voiceMemosLimit}
+            featureName="voice memos"
+          />
+        )}
 
         <View style={styles.content}>
           {/* Recording Controls */}
@@ -645,5 +694,62 @@ const styles = StyleSheet.create({
   exampleText: {
     fontSize: 13,
     color: COLORS.gray[700],
+  },
+  guidanceSection: {
+    backgroundColor: '#f0f9ff',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  guidanceTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1e40af',
+    marginBottom: 12,
+  },
+  guidanceText: {
+    fontSize: 14,
+    color: '#374151',
+    marginBottom: 16,
+    lineHeight: 20,
+  },
+  guidanceSteps: {
+    marginBottom: 20,
+  },
+  guidanceStep: {
+    fontSize: 14,
+    color: '#059669',
+    marginBottom: 8,
+    paddingLeft: 8,
+  },
+  examplePrompts: {
+    marginTop: 8,
+  },
+  promptsTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1f2937',
+    marginBottom: 12,
+  },
+  promptCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: '#667eea',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  promptText: {
+    fontSize: 14,
+    color: '#374151',
+    fontStyle: 'italic',
+    lineHeight: 20,
   },
 });
