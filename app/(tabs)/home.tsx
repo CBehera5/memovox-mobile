@@ -1,6 +1,6 @@
 // app/(tabs)/home.tsx
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
@@ -142,7 +142,8 @@ export default function Home() {
     }
   };
 
-  const loadData = async () => {
+  // PERFORMANCE IMPROVEMENT: Wrap loadData with useCallback to prevent recreating on every render
+  const loadData = useCallback(async () => {
     try {
       // Get current user
       const userData = await AuthService.getCurrentUser();
@@ -154,18 +155,17 @@ export default function Home() {
       }
       setUser(userData);
 
-      // Get memos from Supabase
-      const memosData = await VoiceMemoService.getUserMemos(userData.id);
+      // PERFORMANCE IMPROVEMENT: Parallelize independent API calls
+      const [memosData, savedMemoIds, personaData] = await Promise.all([
+        VoiceMemoService.getUserMemos(userData.id),
+        StorageService.getSavedMemos(userData.id),
+        StorageService.getUserPersona(),
+      ]);
+
       const sorted = sortByDate(memosData);
       console.log('Loaded memos from Supabase:', memosData.length);
       setMemos(sorted);
-
-      // Load saved memos
-      const savedMemoIds = await StorageService.getSavedMemos(userData.id);
       setSavedMemos(new Set(savedMemoIds));
-
-      // Load persona
-      const personaData = await StorageService.getUserPersona();
       setPersona(personaData);
 
       // Calculate urgency level based on memos
@@ -177,24 +177,24 @@ export default function Home() {
     } catch (error) {
       console.error('Error loading data:', error);
     }
-  };
+  }, [loadAgentData, calculateUrgency]);
 
-  const loadAgentData = async (userId: string) => {
+  const loadAgentData = useCallback(async (userId: string) => {
     try {
-      // Get today's actions
-      const today = await AgentService.getTodayActions(userId);
+      // PERFORMANCE IMPROVEMENT: Parallelize independent API calls
+      const [today, upcoming, stats, pending, suggestions] = await Promise.all([
+        AgentService.getTodayActions(userId),
+        AgentService.getUpcomingActions(userId, 7),
+        AgentService.getCompletionStats(userId),
+        AgentService.getPendingActions(userId),
+        AgentService.getSmartSuggestions(userId),
+      ]);
+
       setTodayActions(today);
-
-      // Get upcoming actions (next 7 days)
-      const upcoming = await AgentService.getUpcomingActions(userId, 7);
       setUpcomingActions(upcoming);
-
-      // Get completion statistics
-      const stats = await AgentService.getCompletionStats(userId);
       setCompletionStats(stats);
 
-      // Get ALL pending actions sorted by priority and date
-      const pending = await AgentService.getPendingActions(userId);
+      // Sort pending actions by priority and date
       const sortedActions = pending.sort((a, b) => {
         // First sort by due date
         if (a.dueDate && b.dueDate) {
@@ -211,16 +211,13 @@ export default function Home() {
         return bPriority - aPriority;
       });
       setAllActions(sortedActions);
-
-      // Get smart suggestions (old/unacted tasks)
-      const suggestions = await AgentService.getSmartSuggestions(userId);
       setSmartSuggestions(suggestions.slice(0, 3)); // Show top 3
     } catch (error) {
       console.error('Error loading agent data:', error);
     }
-  };
+  }, []);
 
-  const calculateUrgency = (allMemos: VoiceMemo[]): string => {
+  const calculateUrgency = useCallback((allMemos: VoiceMemo[]): string => {
     // Count recent action items (events/reminders from past week)
     const oneWeekAgo = new Date();
     oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
@@ -236,39 +233,93 @@ export default function Home() {
     if (pendingItems >= 3) return '🟡 Medium - Several tasks need attention';
     if (pendingItems >= 1) return '🟢 Low - Few action items noted';
     return '⚪ Clear - No pending action items';
-  };
+  }, []);
 
-  const getActionItems = (allMemos: VoiceMemo[]): VoiceMemo[] => {
+  const getActionItems = useCallback((allMemos: VoiceMemo[]): VoiceMemo[] => {
     // Get all memos sorted by date, most recent first
     return allMemos
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  };
+  }, []);
 
-  const onRefresh = async () => {
+  // PERFORMANCE IMPROVEMENT: Memoize expensive computations
+  const pendingActionsCount = useMemo(() => {
+    return allActions.filter(action => action.status === 'pending').length;
+  }, [allActions]);
+
+  // PERFORMANCE IMPROVEMENT: Memoize filtered and sorted pending actions
+  const sortedPendingActions = useMemo(() => {
+    return allActions
+      .filter(action => action.status === 'pending')
+      .sort((a, b) => {
+        // Sort by priority: high > medium > low
+        const priorityOrder: Record<string, number> = { high: 3, medium: 2, low: 1 };
+        const aPriority = priorityOrder[a.priority] || 1;
+        const bPriority = priorityOrder[b.priority] || 1;
+        if (bPriority !== aPriority) return bPriority - aPriority;
+        // Then by due date
+        if (a.dueDate && b.dueDate) {
+          return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+        }
+        return 0;
+      });
+  }, [allActions]);
+
+  // PERFORMANCE IMPROVEMENT: Memoize today and overdue actions count
+  const { todayCount, overdueCount } = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    let todayC = 0;
+    let overdueC = 0;
+    
+    for (const action of allActions) {
+      if (!action.dueDate || action.status !== 'pending') continue;
+      
+      const dueDate = new Date(action.dueDate);
+      dueDate.setHours(0, 0, 0, 0);
+      const dueTime = dueDate.getTime();
+      const todayTime = today.getTime();
+      
+      if (dueTime === todayTime) {
+        todayC++;
+      } else if (dueTime < todayTime) {
+        overdueC++;
+      }
+    }
+    
+    return { todayCount: todayC, overdueCount: overdueC };
+  }, [allActions]);
+
+  // PERFORMANCE IMPROVEMENT: Wrap callbacks with useCallback
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadData();
     setRefreshing(false);
-  };
+  }, [loadData]);
 
-  const deleteMemo = async (memoId: string) => {
+  const deleteMemo = useCallback(async (memoId: string) => {
     try {
       if (!user) {
         console.warn('No user logged in');
         return;
       }
       await VoiceMemoService.deleteMemo(memoId, user.id);
-      // Remove from local state
-      setMemos(memos.filter(memo => memo.id !== memoId));
-      // Recalculate urgency
-      const updatedMemos = memos.filter(memo => memo.id !== memoId);
-      const urgency = calculateUrgency(updatedMemos);
-      setUrgencyLevel(urgency);
+      // Remove from local state using functional update
+      setMemos(prev => prev.filter(memo => memo.id !== memoId));
     } catch (error) {
       console.error('Error deleting memo:', error);
     }
-  };
+  }, [user]);
 
-  const saveMemoForLater = async (memoId: string, title: string) => {
+  // PERFORMANCE IMPROVEMENT: Recalculate urgency when memos change
+  useEffect(() => {
+    if (memos.length > 0) {
+      const urgency = calculateUrgency(memos);
+      setUrgencyLevel(urgency);
+    }
+  }, [memos]);
+
+  const saveMemoForLater = useCallback(async (memoId: string, title: string) => {
     try {
       const newSavedMemos = new Set(savedMemos);
       if (newSavedMemos.has(memoId)) {
@@ -276,8 +327,8 @@ export default function Home() {
         Alert.alert('Removed', `"${title}" removed from saved items`);
       } else {
         newSavedMemos.add(memoId);
-        // Remove from home page display
-        setMemos(memos.filter(memo => memo.id !== memoId));
+        // Remove from home page display using functional update
+        setMemos(prev => prev.filter(memo => memo.id !== memoId));
         Alert.alert('Saved!', `"${title}" saved for later. It's now only visible in Notes tab.`);
       }
       setSavedMemos(newSavedMemos);
@@ -288,9 +339,9 @@ export default function Home() {
     } catch (error) {
       console.error('Error saving memo:', error);
     }
-  };
+  }, [savedMemos, user]);
 
-  const shareTaskConversation = async (action: AgentAction) => {
+  const shareTaskConversation = useCallback(async (action: AgentAction) => {
     try {
       const conversationText = `📋 Task: ${action.title}\n\n` +
         `Priority: ${action.priority?.toUpperCase()}\n` +
@@ -308,9 +359,9 @@ export default function Home() {
     } catch (error) {
       console.error('Error sharing task:', error);
     }
-  };
+  }, []);
 
-  const copyTaskToClipboard = async (action: AgentAction) => {
+  const copyTaskToClipboard = useCallback(async (action: AgentAction) => {
     try {
       const conversationText = `📋 ${action.title}\n` +
         `Priority: ${action.priority?.toUpperCase()} | Status: ${action.status}\n` +
@@ -321,9 +372,9 @@ export default function Home() {
     } catch (error) {
       console.error('Error copying task:', error);
     }
-  };
+  }, []);
 
-  const toggleComplete = async (memo: VoiceMemo) => {
+  const toggleComplete = useCallback(async (memo: VoiceMemo) => {
     try {
       if (!user) {
         console.warn('No user logged in');
@@ -341,16 +392,16 @@ export default function Home() {
       }
 
       if (updatedMemo) {
-        // Update local state
-        setMemos(memos.map(m => m.id === memo.id ? updatedMemo! : m));
+        // Update local state using functional update
+        setMemos(prev => prev.map(m => m.id === memo.id ? updatedMemo! : m));
         Alert.alert('✓ Updated', memo.isCompleted ? 'Memo marked as incomplete' : 'Memo marked as complete');
       }
     } catch (error) {
       console.error('Error toggling memo completion:', error);
     }
-  };
+  }, [user]);
 
-  const shareMemo = async (memo: VoiceMemo) => {
+  const shareMemo = useCallback(async (memo: VoiceMemo) => {
     try {
       // Create shareable text content
       const shareText = `📝 ${memo.title || 'Voice Memo'}\n\n` +
@@ -380,7 +431,7 @@ export default function Home() {
       console.error('Error sharing memo:', error);
       Alert.alert('Share Failed', 'Unable to share memo. Please try again.');
     }
-  };
+  }, []);
 
   const renderCarouselCard = (index: number) => {
     if (index === 0) {
