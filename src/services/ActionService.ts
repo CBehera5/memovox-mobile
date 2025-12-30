@@ -13,6 +13,8 @@ export interface ActionRequest {
   dueTime?: Date;
   priority?: 'high' | 'medium' | 'low';
   originalUserMessage: string;
+  userId?: string;
+  createdFrom?: string;
 }
 
 export interface ActionResult {
@@ -54,6 +56,8 @@ class ActionService {
         shouldShowAlert: true,
         shouldPlaySound: true,
         shouldSetBadge: true,
+        shouldShowBanner: true,
+        shouldShowList: true,
       }),
     });
 
@@ -76,7 +80,6 @@ class ActionService {
     }
 
     try {
-      const lang = language || LanguageService.getCurrentLanguage();
       const systemPrompt = LanguageService.getActionParsingPrompt();
 
       const response = await this.groqClient.chat.completions.create({
@@ -385,17 +388,23 @@ class ActionService {
       const taskId = `task_${Date.now()}`;
       const task = {
         id: taskId,
+        userId: actionRequest.userId || 'unknown', // Fallback for safety
+        type: 'task',
         title: actionRequest.title,
         description: actionRequest.description,
-        dueDate: actionRequest.dueTime || new Date(),
-        priority: actionRequest.priority,
+        dueDate: actionRequest.dueTime ? actionRequest.dueTime.toISOString() : new Date().toISOString(),
+        priority: actionRequest.priority || 'medium',
+        status: 'pending',
+        createdFrom: actionRequest.createdFrom || 'chat',
         completed: false,
         createdAt: new Date().toISOString(),
+        // Add other required fields if AgentAction demands them
       };
 
       // Save to storage
+      // Note: We cast to any because AgentAction might have more fields, but we satisfy the required ones
       const tasks = await StorageService.getTasks();
-      tasks.push(task);
+      tasks.push(task as any);
       await StorageService.saveTasks(tasks);
 
       console.log('Task created:', task);
@@ -448,10 +457,12 @@ class ActionService {
         content: {
           title: options.title,
           body: options.body,
-          sound: options.sound || 'default',
+          sound: options.sound || 'default', // Custom sounds need setup
         },
         trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
           seconds: Math.max(1, seconds), // At least 1 second
+          repeats: false,
         },
       });
     } catch (error) {

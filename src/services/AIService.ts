@@ -5,6 +5,8 @@ import StorageService from './StorageService';
 import { AI_MODELS } from '../constants';
 import Groq from 'groq-sdk';
 import LanguageService from './LanguageService';
+import { logger } from './Logger';
+import ReminderService from './ReminderService';
 
 import { GROQ_API_KEY } from '../config/env';
 
@@ -25,85 +27,74 @@ class AIService {
   private groqClient: Groq | null = null;
 
   constructor() {
-    // Initialize Groq client with the API key from environment
-    if (__DEV__) {
-      console.log('🔧 AIService: Initializing...');
-      console.log('🔑 API Key status:', GROQ_API_KEY ? `Present (${GROQ_API_KEY.substring(0, 15)}...)` : '❌ MISSING');
+    this.initialize();
+  }
+
+  async initialize(): Promise<void> {
+    const savedConfig = await StorageService.getAIConfig();
+    if (savedConfig) {
+      this.config = { ...this.config, ...savedConfig };
     }
     
+    // Explicitly check env if not in config
+    if (!this.config.apiKey) {
+        this.config.apiKey = GROQ_API_KEY;
+    }
+
+    this.initializeClient();
+  }
+
+  private initializeClient() {
     if (this.config.apiKey) {
       try {
         this.groqClient = new Groq({
           apiKey: this.config.apiKey,
           dangerouslyAllowBrowser: true, // Required for browser/React Native
         });
-        if (__DEV__) console.log('✅ Groq client initialized successfully');
+        logger.info('AIService: Groq client initialized successfully');
       } catch (error) {
-        console.error('❌ AIService: Error initializing Groq client:', error);
+        logger.error('AIService: Error initializing Groq client:', error);
         this.groqClient = null;
       }
     } else {
-      console.error('❌ No Groq API key provided - check your .env.local file!');
-      console.error('   Make sure EXPO_PUBLIC_GROQ_API_KEY is set');
-    }
-  }
-
-  async initialize(): Promise<void> {
-    const savedConfig = await StorageService.getAIConfig();
-    if (savedConfig) {
-      this.config = savedConfig;
-      // Reinitialize Groq client if API key changed
-      if (this.config.apiKey) {
-        try {
-          this.groqClient = new Groq({
-            apiKey: this.config.apiKey,
-            dangerouslyAllowBrowser: true,
-          });
-        } catch (error) {
-          console.error('Error initializing Groq client:', error);
-        }
-      }
+      logger.warn('AIService: No Groq API key provided');
     }
   }
 
   async setConfig(config: AIServiceConfig): Promise<void> {
     this.config = config;
     await StorageService.saveAIConfig(config);
-    // Reinitialize Groq client
-    if (config.apiKey) {
-      try {
-        this.groqClient = new Groq({
-          apiKey: config.apiKey,
-          dangerouslyAllowBrowser: true,
-        });
-      } catch (error) {
-        console.error('Error initializing Groq client:', error);
-      }
-    }
+    this.initializeClient();
   }
 
   async transcribeAndAnalyze(audioUri: string): Promise<TranscriptionResult> {
-    // For now, use sample transcription and then analyze with Groq
     try {
-      console.log('Starting transcription and analysis for:', audioUri);
+      logger.info('Starting transcription and analysis', { audioUri });
       
       // Get transcription using Groq Whisper
       const transcription = await this.transcribeAudio(audioUri);
-      console.log('Transcription result:', transcription.substring(0, 100));
       
-      // Check if transcription actually worked
       if (!transcription || transcription.trim().length === 0) {
         throw new Error('No speech detected in the recording. Please try again and speak clearly.');
       }
       
       // Analyze with Groq
-      const analysis = await this.analyzeTranscription(transcription);
-      console.log('Analysis completed successfully');
+      const analysis = await this.analyzeMemo(transcription);
+      logger.info('Analysis completed successfully');
       
+      // 5. If actionable, schedule a smart reminder
+      if (analysis.analysis?.actionItems && analysis.analysis.actionItems.length > 0) {
+        // Schedule a reminder for 4 hours later (Simulated as 10s for demo)
+        await ReminderService.scheduleSmartReminder(
+          `Action Required: ${analysis.title || 'Voice Memo'}`,
+          `You have ${analysis.analysis.actionItems.length} pending action items. Let's get them done!`,
+          10/3600 // 10 seconds
+        );
+      }
+
       return analysis;
     } catch (error: any) {
-      console.error('Error in transcription and analysis:', error);
-      // Re-throw the error with the original message so the UI can show it
+      logger.error('Error in transcription and analysis:', error);
       throw error;
     }
   }
@@ -111,14 +102,12 @@ class AIService {
   async transcribeAudio(audioUri: string): Promise<string> {
     // Use Groq Whisper API to transcribe the actual audio
     if (!this.groqClient) {
-      console.error('❌ Groq client not initialized - API key missing!');
-      console.error('Current API key:', this.config.apiKey ? 'Present (length: ' + this.config.apiKey.length + ')' : 'Missing');
+      logger.error('Groq client not initialized - API key missing!');
       throw new Error('AI service is not configured. Please check your API key in settings or environment variables.');
     }
 
     try {
-      console.log('Transcribing audio using Groq Whisper API...');
-      console.log('Audio URI type:', audioUri.substring(0, 50));
+      logger.info('Transcribing audio using Groq Whisper API...');
       
       // For React Native, we need to use FormData and native fetch
       // Groq SDK's File handling doesn't work properly in RN
@@ -126,23 +115,19 @@ class AIService {
       
       // Add the audio file to FormData
       if (audioUri.startsWith('file://')) {
-        console.log('Processing file:// URI with FormData...');
         formData.append('file', {
           uri: audioUri,
           type: 'audio/mp4',
           name: 'audio.m4a',
         } as any);
       } else if (audioUri.startsWith('http://') || audioUri.startsWith('https://')) {
-        console.log('Fetching remote URL and converting to FormData entry...');
         const response = await fetch(audioUri);
         const blob = await response.blob();
-        console.log('Blob fetched, size:', blob.size, 'type:', blob.type);
         
         // Create a File object from the blob for better compatibility
         const file = new File([blob], 'audio.m4a', { type: blob.type || 'audio/mp4' });
         formData.append('file', file as any);
       } else if (audioUri.startsWith('data:audio/')) {
-        console.log('Converting data URI to FormData entry...');
         const base64Data = audioUri.split(',')[1];
         const binaryString = atob(base64Data);
         const bytes = new Uint8Array(binaryString.length);
@@ -161,17 +146,12 @@ class AIService {
       
       // Get user's preferred language for transcription
       const userLanguage = LanguageService.getCurrentLanguage();
-      const languageCode = userLanguage === 'en' ? 'en' : userLanguage; // Groq supports all these languages
+      const languageCode = userLanguage === 'en' ? 'en' : userLanguage;
       
       // Add other required parameters
       formData.append('model', 'whisper-large-v3-turbo');
-      formData.append('language', languageCode); // Use user's selected language
+      formData.append('language', languageCode);
       formData.append('response_format', 'text');
-
-      if (__DEV__) {
-        console.log('Sending request to Groq API with language:', languageCode);
-        console.log('🔑 API Key status:', this.config.apiKey ? `Present (length: ${this.config.apiKey.length})` : '❌ MISSING');
-      }
       
       // Use native fetch instead of Groq SDK for better React Native compatibility
       const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
@@ -184,15 +164,15 @@ class AIService {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('Groq API error response:', errorText);
+        logger.error('Groq API error response:', { errorText });
         throw new Error(`API returned ${response.status}: ${errorText}`);
       }
 
       const transcribedText = await response.text();
-      console.log('Transcription from Groq Whisper successful:', transcribedText.substring(0, 100));
+      logger.debug('Transcription result received', { length: transcribedText.length });
       return transcribedText;
     } catch (error: any) {
-      console.error('Error transcribing audio with Groq:', error);
+      logger.error('Error transcribing audio with Groq:', error);
       
       // Provide more helpful error messages
       if (error.message?.includes('internet connection')) {
@@ -209,19 +189,19 @@ class AIService {
     }
   }
 
-  private async analyzeTranscription(transcription: string): Promise<TranscriptionResult> {
-    console.log('Analyzing transcription with provider:', this.config.provider);
+  async analyzeMemo(transcription: string): Promise<TranscriptionResult> {
+    logger.info('Analyzing transcription', { provider: this.config.provider });
     
     if (this.groqClient && this.config.provider === 'groq') {
       try {
         return await this.callGroqAPI(transcription);
       } catch (error) {
-        console.error('Groq API error, falling back to mock:', error);
+        logger.error('Groq API error, falling back to mock:', error);
         return this.mockTranscribeAndAnalyze();
       }
     }
     
-    console.log('Using mock analysis');
+    logger.info('Using mock analysis');
     return this.mockTranscribeAndAnalyze();
   }
 
@@ -229,12 +209,12 @@ class AIService {
     try {
       const prompt = this.buildAnalysisPrompt(transcription);
       
-      console.log('Calling Groq API with model: llama-3.3-70b-versatile');
+      logger.debug('Calling Groq API for analysis', { model: 'llama-3.3-70b-versatile' });
       
       const message = await this.groqClient!.chat.completions.create({
-        model: 'llama-3.3-70b-versatile', // Using Meta Llama 3.3 70B Versatile
+        model: 'llama-3.3-70b-versatile',
         max_tokens: 1024,
-        temperature: 0.3, // Lower temperature for more consistent output
+        temperature: 0.3,
         messages: [
           {
             role: 'user',
@@ -243,14 +223,10 @@ class AIService {
         ],
       });
 
-      console.log('Groq API response received');
-
-      // Extract the response content
       const responseText = message.choices[0].message.content || '';
-      console.log('Response text:', responseText);
       
       if (!responseText) {
-        console.warn('Empty response from Groq API');
+        logger.warn('Empty response from Groq API');
         return this.mockTranscribeAndAnalyze();
       }
       
@@ -259,12 +235,18 @@ class AIService {
         const jsonMatch = responseText.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]);
-          console.log('Parsed analysis:', parsed);
+          const rawCategory = parsed.category || 'Notes';
+          // Ensure Title Case for category
+          const category = (rawCategory.charAt(0).toUpperCase() + rawCategory.slice(1).toLowerCase()) as MemoCategory;
           
+          const rawType = parsed.type || 'note';
+          // Ensure lowercase for type
+          const type = rawType.toLowerCase() as MemoType;
+
           return {
             transcription,
-            category: parsed.category || 'Notes',
-            type: parsed.type || 'note',
+            category,
+            type,
             title: parsed.title || 'Untitled',
             analysis: parsed.analysis || {
               sentiment: 'neutral',
@@ -272,19 +254,20 @@ class AIService {
               summary: transcription.substring(0, 100),
               actionItems: [],
               suggestedFollowUps: [],
+              tone: parsed.analysis?.tone,
             },
             metadata: parsed.metadata || {},
           };
         } else {
-          console.warn('Could not extract JSON from response');
+          logger.warn('Could not extract JSON from analysis response');
           return this.mockTranscribeAndAnalyze();
         }
       } catch (parseError) {
-        console.error('Error parsing Groq response:', parseError, 'Response:', responseText);
+        logger.error('Error parsing Groq response:', parseError, { response: responseText });
         return this.mockTranscribeAndAnalyze();
       }
     } catch (error) {
-      console.error('Error calling Groq API:', error);
+      logger.error('Error calling Groq API:', error);
       return this.mockTranscribeAndAnalyze();
     }
   }
@@ -305,7 +288,8 @@ Return ONLY valid JSON matching this exact structure:
     "keywords": ["only words explicitly mentioned in transcription"],
     "summary": "1-2 sentence direct quote or paraphrase of what was said - NO invented details",
     "actionItems": ["only actions the user explicitly stated or clearly implied"],
-    "suggestedFollowUps": []
+    "suggestedFollowUps": [],
+    "tone": "casual|formal|urgent|enthusiastic|serious|humorous"
   },
   "metadata": {
     "priority": "low|medium|high",
@@ -344,7 +328,8 @@ CRITICAL: Return ONLY valid JSON, no additional text. NO invented details.`;
           keywords: ["dentist", "appointment", "checkup", "tomorrow"],
           summary: "Schedule a dental checkup appointment for tomorrow at 4pm",
           actionItems: ["Call dentist", "Schedule appointment"],
-          suggestedFollowUps: ["Set a reminder for the appointment", "Check insurance coverage"]
+          suggestedFollowUps: ["Set a reminder for the appointment", "Check insurance coverage"],
+          tone: "neutral"
         },
         metadata: {
           eventDate: new Date(Date.now() + 86400000).toISOString(),
@@ -362,7 +347,8 @@ CRITICAL: Return ONLY valid JSON, no additional text. NO invented details.`;
           keywords: ["buy", "groceries", "milk", "eggs"],
           summary: "Pick up essential groceries including milk, eggs, bread, and coffee",
           actionItems: ["Buy milk", "Buy eggs", "Buy bread", "Buy coffee"],
-          suggestedFollowUps: ["Check if anything else is needed", "Look for coupons"]
+          suggestedFollowUps: ["Check if anything else is needed", "Look for coupons"],
+          tone: "casual"
         },
         metadata: {
           reminderDate: new Date().toISOString(),
@@ -379,7 +365,8 @@ CRITICAL: Return ONLY valid JSON, no additional text. NO invented details.`;
           keywords: ["redesign", "homepage", "user-friendly", "modern"],
           summary: "Proposal to update the homepage with a more modern and user-friendly design",
           actionItems: ["Research modern design trends", "Create mockups"],
-          suggestedFollowUps: ["Schedule meeting with design team", "Review competitor sites"]
+          suggestedFollowUps: ["Schedule meeting with design team", "Review competitor sites"],
+          tone: "enthusiastic"
         },
         metadata: {
           priority: "low"

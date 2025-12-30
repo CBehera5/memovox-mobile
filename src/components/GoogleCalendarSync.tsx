@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import GoogleCalendarService from '../services/GoogleCalendarService';
+import AuthService from '../services/AuthService';
 import { COLORS } from '../constants';
 
 interface GoogleCalendarSyncProps {
@@ -42,17 +43,12 @@ export default function GoogleCalendarSync({ onSync }: GoogleCalendarSyncProps) 
   const handleSignIn = async () => {
     setIsLoading(true);
     try {
-      const success = await GoogleCalendarService.signIn();
-      if (success) {
-        setIsSignedIn(true);
-        Alert.alert('Success', 'Connected to Google Calendar!');
-        await syncEvents();
-      } else {
-        Alert.alert('Error', 'Failed to connect to Google Calendar');
-      }
+      // Use consolidated auth flow
+      await AuthService.signInWithGoogle();
+      // Note: The actual sign-in happens via redirect, so we don't set isSignedIn(true) here immediately.
+      // The app will reload or handle the deep link callback.
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to sign in');
-    } finally {
       setIsLoading(false);
     }
   };
@@ -166,7 +162,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary,
     paddingVertical: 12,
     paddingHorizontal: 20,
-    borderRadius: 8,
+    borderRadius: 30,
     minHeight: 48,
   },
   icon: {

@@ -277,32 +277,7 @@ export default function Profile() {
           {/* Google Calendar Sync */}
           <GoogleCalendarSync />
 
-          <TouchableOpacity 
-            style={styles.settingButton}
-            onPress={async () => {
-              try {
-                const result = await Share.share({
-                  title: 'Try MemoVox - AI Voice Memos',
-                  message: `🎙️ Hey! I'm using MemoVox to turn my voice memos into organized tasks with AI.\n\nIt's like having a personal assistant that:\n✨ Transcribes my thoughts instantly\n📋 Extracts tasks automatically\n🤖 Helps me plan with AI chat\n\nDownload it here: https://memovox.app\n\nJoin me and get productive! 🚀`,
-                });
 
-                if (result.action === Share.sharedAction) {
-                  if (result.activityType) {
-                    console.log('Shared via:', result.activityType);
-                  } else {
-                    console.log('Shared successfully');
-                  }
-                  Alert.alert('Thanks!', 'Thanks for spreading the word about MemoVox! 🎉');
-                }
-              } catch (error: any) {
-                console.error('Error sharing:', error);
-                Alert.alert('Error', 'Failed to share. Please try again.');
-              }
-            }}
-          >
-            <Text style={styles.settingButtonText}>📲 Invite Friends</Text>
-            <Text style={styles.settingButtonIcon}>→</Text>
-          </TouchableOpacity>
 
           <TouchableOpacity 
             style={styles.settingButton}
@@ -509,7 +484,7 @@ const styles = StyleSheet.create({
   },
   inviteButton: {
     backgroundColor: COLORS.white,
-    borderRadius: 16,
+    borderRadius: 30,
     padding: 16,
     marginBottom: 16,
     shadowColor: COLORS.primary,
@@ -609,7 +584,7 @@ const styles = StyleSheet.create({
   dangerButton: {
     backgroundColor: COLORS.error,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 30,
     alignItems: 'center',
     marginBottom: 12,
   },
@@ -621,7 +596,7 @@ const styles = StyleSheet.create({
   logoutButton: {
     backgroundColor: COLORS.white,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 30,
     alignItems: 'center',
     borderWidth: 2,
     borderColor: COLORS.error,

@@ -4,8 +4,8 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { User, VoiceMemo, AIServiceConfig } from '../types';
-import { ChatSession } from './ChatService';
+import { User, VoiceMemo, AIServiceConfig, UserPersona, Notification, AgentAction } from '../types';
+import type { ChatSession } from './ChatService'; // Use type import to avoid cycles
 
 interface MemoData {
   id: string;
@@ -75,65 +75,63 @@ export class StorageService {
     }
   }
 
+  // Legacy MemoData support (can be deprecated)
   async saveMemo(memo: MemoData): Promise<void> {}
   async getMemo(id: string): Promise<MemoData | null> { return null; }
   async getAllMemos(): Promise<MemoData[]> { return []; }
   async deleteMemo(id: string): Promise<void> {}
   async searchMemos(query: string): Promise<MemoData[]> { return []; }
-  async saveNotification(notification: any): Promise<void> {}
-  async getNotifications(): Promise<any[]> { return []; }
+  
+  async saveNotification(notification: Notification): Promise<void> {
+    // Implementation needed if used
+  }
+  async getNotifications(): Promise<Notification[]> { return []; }
   async clearNotifications(): Promise<void> {}
 
-  async saveVoiceMemo(memo: VoiceMemo): Promise<void> {
+  /**
+   * DIRECT Voice Memo Storage Access
+   * Note: This does not sync with backend. Use VoiceMemoService for business logic.
+   */
+  async saveVoiceMemos(memos: VoiceMemo[]): Promise<void> {
     try {
-      const VoiceMemoService = (await import('./VoiceMemoService')).default;
-      await VoiceMemoService.saveMemo(memo);
+      await AsyncStorage.setItem(this.VOICE_MEMOS_KEY, JSON.stringify(memos));
     } catch (error) {
-      console.error('Error saving voice memo:', error);
+      console.error('Error saving voice memos:', error);
     }
   }
 
   async getVoiceMemos(): Promise<VoiceMemo[]> {
     try {
-      const user = await this.getUser();
-      if (!user) return [];
-      const VoiceMemoService = (await import('./VoiceMemoService')).default;
-      return await VoiceMemoService.getUserMemos(user.id);
+      const data = await AsyncStorage.getItem(this.VOICE_MEMOS_KEY);
+      return data ? JSON.parse(data) : [];
     } catch (error) {
       console.error('Error getting voice memos:', error);
       return [];
     }
   }
 
-  async getVoiceMemo(id: string): Promise<VoiceMemo | null> {
+  /**
+   * Helper to append a single memo to local storage
+   */
+  async appendVoiceMemo(memo: VoiceMemo): Promise<void> {
     try {
-      const VoiceMemoService = (await import('./VoiceMemoService')).default;
-      return await VoiceMemoService.getMemo(id);
+      const current = await this.getVoiceMemos();
+      // Remove existing if present (update)
+      const filtered = current.filter(m => m.id !== memo.id);
+      const updated = [memo, ...filtered];
+      await this.saveVoiceMemos(updated);
     } catch (error) {
-      console.error('Error getting voice memo:', error);
-      return null;
+      console.error('Error appending voice memo:', error);
     }
   }
 
-  async deleteVoiceMemo(id: string): Promise<void> {
-    try {
-      const user = await this.getUser();
-      if (!user) return;
-      const VoiceMemoService = (await import('./VoiceMemoService')).default;
-      await VoiceMemoService.deleteMemo(id, user.id);
-    } catch (error) {
-      console.error('Error deleting voice memo:', error);
-    }
-  }
-
-  async updateVoiceMemo(memo: VoiceMemo): Promise<void> {
-    try {
-      const VoiceMemoService = (await import('./VoiceMemoService')).default;
-      await VoiceMemoService.updateMemo(memo);
-    } catch (error) {
-      console.error('Error updating voice memo:', error);
-    }
-  }
+    /**
+    * DEPRECATED: Use saveVoiceMemos or appendVoiceMemo instead.
+    * Keeps compatibility with some existing calls if any
+    */
+   async saveVoiceMemo(memo: VoiceMemo): Promise<void> {
+       await this.appendVoiceMemo(memo);
+   }
 
   async saveAIConfig(config: AIServiceConfig): Promise<void> {
     try {
@@ -153,7 +151,7 @@ export class StorageService {
     }
   }
 
-  async saveUserPersona(persona: any): Promise<void> {
+  async saveUserPersona(persona: UserPersona): Promise<void> {
     try {
       await AsyncStorage.setItem(this.USER_PERSONA_KEY, JSON.stringify(persona));
     } catch (error) {
@@ -161,7 +159,7 @@ export class StorageService {
     }
   }
 
-  async getUserPersona(): Promise<any | null> {
+  async getUserPersona(): Promise<UserPersona | null> {
     try {
       const persona = await AsyncStorage.getItem(this.USER_PERSONA_KEY);
       return persona ? JSON.parse(persona) : null;
@@ -212,7 +210,8 @@ export class StorageService {
   async getUserChatSessions(userId: string): Promise<ChatSession[]> {
     try {
       const data = await AsyncStorage.getItem(`${this.CHAT_SESSIONS_KEY}_${userId}`);
-      return data ? JSON.parse(data) : [];
+      // Cast to unkown first if needed, but ChatSession[] is what we expect
+      return data ? JSON.parse(data) as ChatSession[] : [];
     } catch (error) {
       console.error('Error getting user chat sessions:', error);
       return [];
@@ -291,7 +290,7 @@ export class StorageService {
     }
   }
 
-  async saveTasks(tasks: any[]): Promise<void> {
+  async saveTasks(tasks: AgentAction[]): Promise<void> {
     try {
       await AsyncStorage.setItem('memovox_tasks', JSON.stringify(tasks));
     } catch (error) {
@@ -299,7 +298,7 @@ export class StorageService {
     }
   }
 
-  async getTasks(): Promise<any[]> {
+  async getTasks(): Promise<AgentAction[]> {
     try {
       const data = await AsyncStorage.getItem('memovox_tasks');
       return data ? JSON.parse(data) : [];

@@ -23,6 +23,7 @@ export interface VoiceMemo {
   linkedActions?: string[]; // IDs of created actions
   isCompleted?: boolean;
   completedAt?: string;
+  shared_with?: { user_id: string; name: string; shared_at: string }[];
 }
 
 export type MemoCategory = 
@@ -46,6 +47,7 @@ export interface AIAnalysis {
   actionItems?: string[];
   relatedMemos?: string[];
   suggestedFollowUps?: string[];
+  tone?: string;
 }
 
 export interface MemoMetadata {
@@ -71,7 +73,7 @@ export interface Notification {
   id: string;
   userId: string;
   memoId: string;
-  type: 'reminder' | 'followup' | 'insight';
+  type: 'reminder' | 'followup' | 'insight' | 'system';
   title: string;
   body: string;
   scheduledFor: string;
@@ -138,6 +140,7 @@ export interface AgentAction {
   };
   notificationSound?: string;
   snoozeCount?: number;
+  shared_with?: { user_id: string; name: string; shared_at: string }[];
 }
 
 export interface AgentSuggestion {

@@ -169,7 +169,57 @@ Return ONLY valid JSON array, no additional text.`;
         createdAt: new Date().toISOString(),
       };
 
-      actions.push(newAction);
+      // 1. Save to Supabase
+      // Note: The schema uses quoted camelCase for these columns: "userId", "dueDate", etc.
+      // But shared_with is snake_case.
+      const { data, error } = await supabase
+        .from('agent_actions')
+        .insert([{
+            id: newAction.id,
+            userId: userId,
+            title: newAction.title,
+            type: newAction.type,
+            status: newAction.status,
+            priority: newAction.priority,
+            description: newAction.description,
+            dueDate: newAction.dueDate,
+            dueTime: newAction.dueTime,
+            createdFrom: newAction.createdFrom,
+            createdAt: newAction.createdAt,
+            linkedMemoId: newAction.linkedMemoId,
+            shared_with: [],
+        }])
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error creating action in Supabase:', error);
+        // Fallback to local only if online fails? Or just throw?
+        // For now, let's keep local push as backup or optimistic update
+      }
+
+      // Update local cache with the returned data (which has the real ID)
+      if (data) {
+          const savedAction: AgentAction = {
+              id: data.id,
+              userId: data.userId,
+              title: data.title,
+              type: data.type,
+              status: data.status,
+              priority: data.priority,
+              description: data.description,
+              dueDate: data.dueDate,
+              dueTime: data.dueTime,
+              createdFrom: data.createdFrom,
+              createdAt: data.createdAt,
+              linkedMemoId: data.linkedMemoId,
+              shared_with: data.shared_with
+          };
+          actions.push(savedAction);
+      } else {
+          actions.push(newAction);
+      }
+      
       await this.saveActions(userId, actions);
 
       console.log('Action created:', newAction);
@@ -185,12 +235,55 @@ Return ONLY valid JSON array, no additional text.`;
    */
   async getUserActions(userId: string): Promise<AgentAction[]> {
     try {
+      // 1. Fetch from Supabase (source of truth for shared items)
+      // Schema uses camelCase columns "userId" etc.
+      const { data, error } = await supabase
+        .from('agent_actions')
+        .select('*')
+        .eq('userId', userId) // Corrected from user_id
+        //.or(`userId.eq.${userId},shared_with.cs.[{"user_id": "${userId}"}]`) // TODO: Fix shared logic later
+        .order('createdAt', { ascending: false }); // Corrected from created_at
+
+      if (!error && data) {
+        // Map Supabase rows to AgentAction
+        // Since columns are camelCase in DB, the returned data has camelCase keys!
+        const mappedActions: AgentAction[] = data.map((row: any) => ({
+            id: row.id,
+            userId: row.userId,
+            title: row.title,
+            type: row.type,
+            status: row.status,
+            priority: row.priority,
+            description: row.description,
+            dueDate: row.dueDate,
+            dueTime: row.dueTime,
+            createdFrom: row.createdFrom,
+            createdAt: row.createdAt,
+            linkedMemoId: row.linkedMemoId,
+            shared_with: row.shared_with,
+            completedAt: row.completedAt
+        }));
+
+        // Update local cache
+        await this.saveActions(userId, mappedActions);
+        return mappedActions;
+      }
+      
+      if (error) {
+          console.error('Supabase error in getUserActions:', error);
+      }
+
+      // Fallback to local storage if offline/error
+      console.warn('Fetching actions from local storage (offline/error)');
       const key = `${this.ACTIONS_KEY}_${userId}`;
-      const data = await StorageService.getItem(key);
-      return data ? JSON.parse(data) : [];
+      const localData = await StorageService.getItem(key);
+      return localData ? JSON.parse(localData) : [];
     } catch (error) {
       console.error('Error getting user actions:', error);
-      return [];
+      // Fallback
+      const key = `${this.ACTIONS_KEY}_${userId}`;
+      const localData = await StorageService.getItem(key);
+      return localData ? JSON.parse(localData) : [];
     }
   }
 
@@ -212,6 +305,22 @@ Return ONLY valid JSON array, no additional text.`;
    */
   async completeAction(actionId: string, userId: string): Promise<AgentAction> {
     try {
+      // 1. Update in Supabase
+      const { data, error } = await supabase
+        .from('agent_actions')
+        .update({ 
+            status: 'completed',
+            completedAt: new Date().toISOString() // Corrected from completed_at
+        })
+        .eq('id', actionId)
+        .select()
+        .single();
+
+      if (error) {
+          console.error('Error completing action in DB:', error);
+          // Fallback to local
+      }
+
       const actions = await this.getUserActions(userId);
       const action = actions.find(a => a.id === actionId);
       
@@ -236,6 +345,16 @@ Return ONLY valid JSON array, no additional text.`;
    */
   async cancelAction(actionId: string, userId: string): Promise<void> {
     try {
+      // 1. Update in Supabase
+      const { error } = await supabase
+        .from('agent_actions')
+        .update({ status: 'cancelled' })
+        .eq('id', actionId);
+        
+      if (error) {
+          console.error('Error cancelling action in DB:', error);
+      }
+
       const actions = await this.getUserActions(userId);
       const action = actions.find(a => a.id === actionId);
       
@@ -258,7 +377,6 @@ Return ONLY valid JSON array, no additional text.`;
       const actions = await this.getUserActions(userId);
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      const todayStr = today.toISOString().split('T')[0];
 
       const todayActions = actions.filter(action => {
         if (action.status !== 'pending') return false;
@@ -267,9 +385,10 @@ Return ONLY valid JSON array, no additional text.`;
         if (action.dueDate) {
           const actionDate = this.parseActionDate(action.dueDate);
           if (actionDate) {
-            const actionDateStr = actionDate.toISOString().split('T')[0];
-            // Include if due today or overdue
-            return actionDateStr <= todayStr;
+              // Compare LOCAL dates
+              const actionLocal = new Date(actionDate);
+              actionLocal.setHours(0,0,0,0);
+              return actionLocal <= today;
           }
         }
         
@@ -278,9 +397,10 @@ Return ONLY valid JSON array, no additional text.`;
           try {
             const dueDateTime = new Date(action.dueTime);
             if (!isNaN(dueDateTime.getTime())) {
-              const dueDateStr = dueDateTime.toISOString().split('T')[0];
-              // Include if due today or overdue
-              return dueDateStr <= todayStr;
+               // Compare LOCAL dates
+               const dueLocal = new Date(dueDateTime);
+               dueLocal.setHours(0,0,0,0);
+               return dueLocal <= today;
             }
           } catch (e) {
             console.warn('Could not parse dueTime:', action.dueTime);
@@ -425,6 +545,17 @@ Return ONLY valid JSON array, no additional text.`;
     try {
       const actions = await this.getUserActions(userId);
       const filtered = actions.filter(a => a.id !== actionId);
+      
+      // Also delete from Supabase
+      const { error } = await supabase
+        .from('agent_actions')
+        .delete()
+        .eq('id', actionId);
+        
+      if (error) {
+          console.error('Error deleting action from DB:', error);
+      }
+      
       await this.saveActions(userId, filtered);
       console.log('Action deleted:', actionId);
     } catch (error) {
@@ -571,11 +702,12 @@ Return ONLY valid JSON array, no additional text.`;
       }
 
       // Update the action
+      // Use camelCase completedAt if that's what schema supports (yes)
       const { data: updatedAction, error: updateError } = await supabase
         .from('agent_actions')
         .update({
           status,
-          completedAt: status === 'completed' ? new Date().toISOString() : null,
+          completedAt: status === 'completed' ? new Date().toISOString() : null, // Corrected from completedAt if it was snake_case before (but I think I used camelCase?)
         })
         .eq('id', actionId)
         .select()
@@ -586,10 +718,93 @@ Return ONLY valid JSON array, no additional text.`;
       }
 
       if (__DEV__) console.log(`✅ Action ${actionId} status updated to: ${status}`);
-      return updatedAction as AgentAction;
+      // return updatedAction as AgentAction; // Should be fine if shape matches
+      // Manually map to be safe
+       const mapped: AgentAction = {
+            id: updatedAction.id,
+            userId: updatedAction.userId,
+            title: updatedAction.title,
+            type: updatedAction.type,
+            status: updatedAction.status,
+            priority: updatedAction.priority,
+            description: updatedAction.description,
+            dueDate: updatedAction.dueDate,
+            dueTime: updatedAction.dueTime,
+            createdFrom: updatedAction.createdFrom,
+            createdAt: updatedAction.createdAt,
+            linkedMemoId: updatedAction.linkedMemoId,
+            shared_with: updatedAction.shared_with,
+            completedAt: updatedAction.completedAt
+       };
+       return mapped;
+
     } catch (error) {
       console.error('Error updating action status:', error);
       return null;
+    }
+  }
+  /**
+   * Share an action with another user and notify them
+   */
+  async shareAction(
+    actionId: string, 
+    targetUserId: string, 
+    targetUserName: string,
+    sharerName: string // Added to personalize notification
+  ): Promise<boolean> {
+    try {
+      // Get current shared list or init
+      const { data: currentData } = await supabase
+        .from('agent_actions')
+        .select('shared_with, title') // Fetch title for notification
+        .eq('id', actionId)
+        .single();
+      
+      const currentShared = currentData?.shared_with || [];
+      const actionTitle = currentData?.title || 'Task';
+      
+      // Check if already shared
+      if (currentShared.some((m: any) => m.user_id === targetUserId)) {
+        return true;
+      }
+
+      const newShared = [
+        ...currentShared,
+        { user_id: targetUserId, name: targetUserName, shared_at: new Date().toISOString() }
+      ];
+
+      // 1. Update the Action with new member
+      const { error: updateError } = await supabase
+        .from('agent_actions')
+        .update({ shared_with: newShared })
+        .eq('id', actionId);
+
+      if (updateError) {
+        console.error('Error sharing action:', updateError);
+        return false;
+      }
+
+      // 2. Create Notification for the target user
+      const { error: notifyError } = await supabase
+        .from('notifications')
+        .insert({
+          user_id: targetUserId,
+          title: 'New Shared Task',
+          body: `${sharerName} invited you to collaborate on "${actionTitle}"`,
+          type: 'assignment',
+          data: { actionId },
+          is_read: false
+        });
+
+      if (notifyError) {
+        console.error('Error creating notification:', notifyError);
+        // We don't return false here because the share itself succeeded
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error in shareAction:', error);
+      return false;
     }
   }
 }

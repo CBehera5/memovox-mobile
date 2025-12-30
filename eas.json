@@ -22,6 +22,9 @@
       "android": {
         "buildType": "app-bundle",
         "gradleCommand": ":app:bundleRelease"
+      },
+      "env": {
+        "EXPO_PUBLIC_APP_URL": "memovox://"
       }
     },
     "production-apk": {

@@ -3,22 +3,9 @@
  * Handles Google Calendar API integration using expo-auth-session
  */
 
-import * as AuthSession from 'expo-auth-session';
-import * as WebBrowser from 'expo-web-browser';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
-import { Platform } from 'react-native';
-import { 
-  GOOGLE_CLIENT_ID_ANDROID, 
-  GOOGLE_CLIENT_ID_IOS, 
-  GOOGLE_CLIENT_ID_WEB 
-} from '../config/env';
-
-// Required for web browser to close properly after auth
-WebBrowser.maybeCompleteAuthSession();
-
-const STORAGE_KEY = 'google_calendar_token';
-const REFRESH_TOKEN_KEY = 'google_calendar_refresh_token';
+import AuthService from './AuthService';
+import StorageService from './StorageService';
 
 export interface GoogleCalendarEvent {
   id: string;
@@ -38,189 +25,57 @@ export interface GoogleCalendarEvent {
 }
 
 class GoogleCalendarService {
-  private accessToken: string | null = null;
-  private refreshTokenValue: string | null = null;
-
-  constructor() {
-    this.loadTokens();
-  }
-
+  
   /**
-   * Load stored tokens
+   * Get the current access token from Supabase session
    */
-  private async loadTokens(): Promise<void> {
+  private async getAccessToken(): Promise<string | null> {
     try {
-      const [storedAccessToken, storedRefreshToken] = await Promise.all([
-        AsyncStorage.getItem(STORAGE_KEY),
-        AsyncStorage.getItem(REFRESH_TOKEN_KEY),
-      ]);
+      // 1. Check current session
+      const session = await AuthService.getSession();
+      if (session?.provider_token) {
+        console.log('✅ Found provider token in active session');
+        // Update local cache just in case
+        await StorageService.setItem('google_provider_token', session.provider_token);
+        return session.provider_token;
+      }
+
+      // 2. Fallback to local storage
+      console.log('⚠️ No provider token in session, checking local storage...');
+      const localToken = await StorageService.getItem('google_provider_token');
       
-      this.accessToken = storedAccessToken;
-      this.refreshTokenValue = storedRefreshToken;
-      
-      if (this.accessToken) {
-        console.log('✅ Loaded stored Google Calendar tokens');
+      if (localToken) {
+        console.log('✅ Found provider token in local storage');
+        return localToken;
       }
+
+      console.warn('❌ No provider token found anywhere. User may need to re-authenticate with Google.');
+      return null;
     } catch (error) {
-      console.error('Error loading tokens:', error);
+      console.error('Error retrieval access token:', error);
+      return null;
     }
   }
 
   /**
-   * Save tokens to storage
-   */
-  private async saveTokens(accessToken: string, refreshToken?: string): Promise<void> {
-    try {
-      await AsyncStorage.setItem(STORAGE_KEY, accessToken);
-      if (refreshToken) {
-        await AsyncStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
-        this.refreshTokenValue = refreshToken;
-      }
-      this.accessToken = accessToken;
-    } catch (error) {
-      console.error('Error saving tokens:', error);
-    }
-  }
-
-  /**
-   * Get the appropriate client ID for the current platform
-   */
-  private getClientId(): string {
-    const clientId = Platform.select({
-      android: GOOGLE_CLIENT_ID_ANDROID,
-      ios: GOOGLE_CLIENT_ID_IOS,
-      default: GOOGLE_CLIENT_ID_WEB,
-    });
-
-    if (!clientId || clientId.includes('YOUR_')) {
-      console.warn('⚠️  Google Calendar: Client ID not configured properly');
-    }
-
-    return clientId || '';
-  }
-
-  /**
-   * Sign in to Google and request calendar permissions
-   */
-  async signIn(): Promise<boolean> {
-    try {
-      const clientId = this.getClientId();
-      if (!clientId || clientId.includes('YOUR_')) {
-        console.warn('Google Calendar not configured - please add client IDs to .env.local');
-        return false;
-      }
-
-      const redirectUri = AuthSession.makeRedirectUri({
-        scheme: 'memovox',
-        path: 'auth',
-      });
-
-      console.log('Redirect URI:', redirectUri);
-
-      const authRequest = new AuthSession.AuthRequest({
-        clientId,
-        redirectUri,
-        scopes: [
-          'openid',
-          'profile',
-          'email',
-          'https://www.googleapis.com/auth/calendar.readonly',
-          'https://www.googleapis.com/auth/calendar.events',
-        ],
-        responseType: AuthSession.ResponseType.Code,
-        usePKCE: true,
-        extraParams: {
-          access_type: 'offline',
-          prompt: 'consent',
-        },
-      });
-
-      const result = await authRequest.promptAsync(
-        { authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth' }
-      );
-
-      if (result.type === 'success' && result.params.code) {
-        // Exchange authorization code for access token
-        const tokenResult = await this.exchangeCodeForToken(
-          result.params.code,
-          authRequest.codeVerifier!,
-          redirectUri,
-          clientId
-        );
-
-        if (tokenResult) {
-          console.log('✅ Signed in to Google Calendar');
-          return true;
-        }
-      }
-
-      console.log('Sign in cancelled or failed');
-      return false;
-    } catch (error: any) {
-      console.error('Error signing in to Google:', error);
-      return false;
-    }
-  }
-
-  /**
-   * Exchange authorization code for access token
-   */
-  private async exchangeCodeForToken(
-    code: string,
-    codeVerifier: string,
-    redirectUri: string,
-    clientId: string
-  ): Promise<boolean> {
-    try {
-      const response = await axios.post(
-        'https://oauth2.googleapis.com/token',
-        {
-          code,
-          client_id: clientId,
-          redirect_uri: redirectUri,
-          grant_type: 'authorization_code',
-          code_verifier: codeVerifier,
-        },
-        {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-        }
-      );
-
-      const { access_token, refresh_token } = response.data;
-      await this.saveTokens(access_token, refresh_token);
-      return true;
-    } catch (error: any) {
-      console.error('Error exchanging code for token:', error.response?.data || error);
-      return false;
-    }
-  }
-
-  /**
-   * Check if user is signed in
+   * Check if user is signed in (has a provider token)
    */
   async isSignedIn(): Promise<boolean> {
-    if (!this.accessToken) {
-      await this.loadTokens();
-    }
-    return !!this.accessToken;
+    const token = await this.getAccessToken();
+    return !!token;
   }
 
   /**
-   * Sign out from Google
+   * Sign out (Handled by AuthService globally now)
    */
   async signOut(): Promise<void> {
-    try {
-      await AsyncStorage.multiRemove([STORAGE_KEY, REFRESH_TOKEN_KEY]);
-      this.accessToken = null;
-      this.refreshTokenValue = null;
-      console.log('✅ Signed out from Google Calendar');
-    } catch (error) {
-      console.error('Error signing out:', error);
-    }
+    // No-op for calendar specifically, handled by main auth
+    console.log('Calendar sign out is handled by main application logout');
   }
 
+  /**
+   * Get user's calendar events
+   */
   /**
    * Get user's calendar events
    */
@@ -230,12 +85,10 @@ class GoogleCalendarService {
     maxResults: number = 50
   ): Promise<GoogleCalendarEvent[]> {
     try {
-      if (!this.accessToken) {
-        const signedIn = await this.isSignedIn();
-        if (!signedIn) {
-          console.warn('Not signed in to Google Calendar');
-          return [];
-        }
+      const accessToken = await this.getAccessToken();
+      if (!accessToken) {
+        console.warn('Not signed in to Google Calendar (No provider token)');
+        return [];
       }
 
       const params: any = {
@@ -255,7 +108,7 @@ class GoogleCalendarService {
         'https://www.googleapis.com/calendar/v3/calendars/primary/events',
         {
           headers: {
-            Authorization: `Bearer ${this.accessToken}`,
+            Authorization: `Bearer ${accessToken}`,
           },
           params,
         }
@@ -265,16 +118,6 @@ class GoogleCalendarService {
       return response.data.items || [];
     } catch (error: any) {
       console.error('Error fetching calendar events:', error.response?.data || error);
-      
-      // If unauthorized, try to refresh token
-      if (error.response?.status === 401) {
-        const refreshed = await this.refreshAccessToken();
-        if (refreshed) {
-          // Retry once
-          return this.getEvents(timeMin, timeMax, maxResults);
-        }
-      }
-      
       return [];
     }
   }
@@ -290,12 +133,10 @@ class GoogleCalendarService {
     location?: string;
   }): Promise<GoogleCalendarEvent | null> {
     try {
-      if (!this.accessToken) {
-        const signedIn = await this.isSignedIn();
-        if (!signedIn) {
-          console.warn('Not signed in to Google Calendar');
-          return null;
-        }
+      const accessToken = await this.getAccessToken();
+      if (!accessToken) {
+        console.warn('Not signed in to Google Calendar');
+        return null;
       }
 
       const eventData = {
@@ -317,7 +158,7 @@ class GoogleCalendarService {
         eventData,
         {
           headers: {
-            Authorization: `Bearer ${this.accessToken}`,
+            Authorization: `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
           },
         }
@@ -327,16 +168,6 @@ class GoogleCalendarService {
       return response.data;
     } catch (error: any) {
       console.error('Error creating calendar event:', error.response?.data || error);
-      
-      // If unauthorized, try to refresh token
-      if (error.response?.status === 401) {
-        const refreshed = await this.refreshAccessToken();
-        if (refreshed) {
-          // Retry once
-          return this.createEvent(event);
-        }
-      }
-      
       return null;
     }
   }
@@ -355,7 +186,8 @@ class GoogleCalendarService {
     }
   ): Promise<GoogleCalendarEvent | null> {
     try {
-      if (!this.accessToken) {
+      const accessToken = await this.getAccessToken();
+      if (!accessToken) {
         console.warn('Not signed in to Google Calendar');
         return null;
       }
@@ -384,7 +216,7 @@ class GoogleCalendarService {
         eventData,
         {
           headers: {
-            Authorization: `Bearer ${this.accessToken}`,
+            Authorization: `Bearer ${accessToken}`,
             'Content-Type': 'application/json',
           },
         }
@@ -403,7 +235,8 @@ class GoogleCalendarService {
    */
   async deleteEvent(eventId: string): Promise<boolean> {
     try {
-      if (!this.accessToken) {
+      const accessToken = await this.getAccessToken();
+      if (!accessToken) {
         console.warn('Not signed in to Google Calendar');
         return false;
       }
@@ -412,7 +245,7 @@ class GoogleCalendarService {
         `https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`,
         {
           headers: {
-            Authorization: `Bearer ${this.accessToken}`,
+            Authorization: `Bearer ${accessToken}`,
           },
         }
       );
@@ -421,45 +254,6 @@ class GoogleCalendarService {
       return true;
     } catch (error: any) {
       console.error('Error deleting calendar event:', error.response?.data || error);
-      return false;
-    }
-  }
-
-  /**
-   * Refresh access token using refresh token
-   */
-  private async refreshAccessToken(): Promise<boolean> {
-    try {
-      if (!this.refreshTokenValue) {
-        console.warn('No refresh token available');
-        await this.signOut();
-        return false;
-      }
-
-      const clientId = this.getClientId();
-      
-      const response = await axios.post(
-        'https://oauth2.googleapis.com/token',
-        {
-          client_id: clientId,
-          refresh_token: this.refreshTokenValue,
-          grant_type: 'refresh_token',
-        },
-        {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-        }
-      );
-
-      const { access_token } = response.data;
-      await this.saveTokens(access_token);
-      console.log('✅ Refreshed Google Calendar access token');
-      return true;
-    } catch (error) {
-      console.error('Error refreshing token:', error);
-      // Sign out if refresh fails
-      await this.signOut();
       return false;
     }
   }

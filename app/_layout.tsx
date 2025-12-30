@@ -5,12 +5,20 @@ import { View, ActivityIndicator, StyleSheet, Platform, Linking } from 'react-na
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
+import { useFonts, Inter_400Regular, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
 import AIService from '../src/services/AIService';
 import NotificationService from '../src/services/NotificationService';
 import AuthService from '../src/services/AuthService';
 
 export default function RootLayout() {
   const router = useRouter();
+
+  // Load Professional Fonts
+  const [fontsLoaded] = useFonts({
+    Inter_400Regular,
+    Inter_600SemiBold,
+    Inter_700Bold,
+  });
 
   useEffect(() => {
     const initialize = async () => {
@@ -85,12 +93,17 @@ export default function RootLayout() {
     };
   }, []);
 
+  if (!fontsLoaded) {
+    return <ActivityIndicator size="large" color="#6366f1" style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }} />;
+  }
+
   return (
     <>
       <StatusBar style="auto" />
       <Stack
         screenOptions={{
           headerShown: false,
+          contentStyle: { backgroundColor: '#f8fafc' }, // Set global background to Slate 50
         }}
       >
         <Stack.Screen name="splash" options={{ headerShown: false }} />

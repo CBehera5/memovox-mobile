@@ -30,8 +30,23 @@ import {
   TYPE_BADGES,
 } from '../../src/constants';
 import { formatRelativeTime, sortByDate } from '../../src/utils';
+import { formatMemoForExport } from '../../src/utils/exportUtils';
 import AnimatedActionButton from '../../src/components/AnimatedActionButton';
 import TaskMenu from '../../src/components/TaskMenu';
+import { 
+  Play, 
+  Pause, 
+  Lightbulb, 
+  CheckCircle, 
+  Circle, 
+  Share as ShareIcon, 
+  Trash2, 
+  Search as SearchIcon, 
+  X,
+  UserPlus
+} from 'lucide-react-native';
+import MemberSelectionModal from '../../src/components/MemberSelectionModal';
+import AgentService from '../../src/services/AgentService'; // For user name if needed, but we have AuthService
 
 const ALL_CATEGORIES: (MemoCategory | 'All')[] = [
   'All',
@@ -56,6 +71,35 @@ export default function Notes() {
   const [selectedCategory, setSelectedCategory] = useState<MemoCategory | 'All'>('All');
   const [selectedType, setSelectedType] = useState<MemoType | 'All'>('All');
   const [searchQuery, setSearchQuery] = useState('');
+  const [memberModalVisible, setMemberModalVisible] = useState(false);
+  const [selectedMemoIdForSharing, setSelectedMemoIdForSharing] = useState<string | null>(null);
+
+  const handleShareAccess = (memoId: string) => {
+    setSelectedMemoIdForSharing(memoId);
+    setMemberModalVisible(true);
+  };
+
+  const handleMemberSelected = async (targetUserId: string, targetUserName: string) => {
+    if (!selectedMemoIdForSharing) return;
+    
+    try {
+      const user = await AuthService.getCurrentUser();
+      const success = await VoiceMemoService.shareMemo(
+        selectedMemoIdForSharing,
+        targetUserId,
+        targetUserName
+      );
+
+      if (success) {
+        Alert.alert('Success', `Memo shared with ${targetUserName}`);
+      } else {
+        Alert.alert('Error', 'Failed to share memo');
+      }
+    } catch (error) {
+      console.error('Error sharing memo access:', error);
+      Alert.alert('Error', 'An error occurred while sharing');
+    }
+  };
   
   // Audio playback state
   const [sound, setSound] = useState<Audio.Sound | null>(null);
@@ -228,8 +272,8 @@ export default function Notes() {
 
   const shareMemo = async (memo: VoiceMemo) => {
     try {
-      // Create shareable text content
-      const shareText = `Check out my memo: "${memo.title || 'Untitled Memo'}"\n\n${memo.transcription.substring(0, 500)}${memo.transcription.length > 500 ? '...' : ''}`;
+      // Use the centralized export utility to format the memo
+      const shareText = formatMemoForExport(memo);
       
       // Use native share dialog (works on iOS/Android)
       await Share.share({
@@ -238,8 +282,7 @@ export default function Notes() {
       });
     } catch (error) {
       console.error('Error sharing memo:', error);
-      // Fallback: Show alert with message to copy
-      Alert.alert('Share', 'Unable to share. Please copy the memo text manually.');
+      Alert.alert('Share', 'Unable to share. Please try again.');
     }
   };
 
@@ -260,11 +303,15 @@ export default function Notes() {
           <View
             style={[
               styles.categoryBadge,
-              { backgroundColor: CATEGORY_COLORS[item.category] },
+              { 
+                backgroundColor: CATEGORY_COLORS[item.category] || 
+                               CATEGORY_COLORS[item.category.charAt(0).toUpperCase() + item.category.slice(1).toLowerCase() as MemoCategory] || 
+                               CATEGORY_COLORS.Notes 
+              },
             ]}
           >
             <Text style={styles.categoryBadgeText}>
-              {CATEGORY_ICONS[item.category]} {item.category}
+              {CATEGORY_ICONS[item.category] || CATEGORY_ICONS[item.category.charAt(0).toUpperCase() + item.category.slice(1).toLowerCase() as MemoCategory] || '📝'} {item.category}
             </Text>
           </View>
           <View
@@ -283,13 +330,13 @@ export default function Notes() {
           <TaskMenu
             menuItems={[
               {
-                icon: playingMemoId === item.id && isPlaying ? "⏸" : "▶️",
-                label: playingMemoId === item.id && isPlaying ? "Pause" : "Play",
-                backgroundColor: "#FF9500",
-                onPress: () => playAudio(item),
+                icon: <UserPlus size={20} color={COLORS.primary} />,
+                label: 'Add Member',
+                backgroundColor: '#E3F2FD', // Light blue bg
+                onPress: () => handleShareAccess(item.id),
               },
               {
-                icon: '💡',
+                icon: <Lightbulb size={20} color={COLORS.white} />,
                 label: 'Insight',
                 backgroundColor: COLORS.primary,
                 onPress: () => {
@@ -300,19 +347,19 @@ export default function Notes() {
                 },
               },
               {
-                icon: item.isCompleted ? "✓" : "☐",
+                icon: item.isCompleted ? <CheckCircle size={20} color={COLORS.white} /> : <Circle size={20} color={COLORS.white} />,
                 label: item.isCompleted ? "Done" : "Complete",
                 backgroundColor: item.isCompleted ? "#34C759" : "#8E8E93",
                 onPress: () => toggleComplete(item),
               },
               {
-                icon: '📤',
+                icon: <ShareIcon size={20} color={COLORS.white} />,
                 label: 'Share',
                 backgroundColor: '#007AFF',
                 onPress: () => shareMemo(item),
               },
               {
-                icon: '🗑️',
+                icon: <Trash2 size={20} color={COLORS.white} />,
                 label: 'Delete',
                 backgroundColor: '#FF3B30',
                 destructive: true,
@@ -377,7 +424,7 @@ export default function Notes() {
       {/* Search Bar */}
       <View style={styles.searchContainer}>
         <View style={styles.searchInputContainer}>
-          <Text style={styles.searchIcon}>🔍</Text>
+          <SearchIcon size={20} color={COLORS.gray[400]} style={{ marginRight: 8 }} />
           <TextInput
             style={styles.searchInput}
             placeholder="Search memos..."
@@ -387,7 +434,7 @@ export default function Notes() {
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Text style={styles.clearIcon}>✕</Text>
+              <X size={20} color={COLORS.gray[400]} />
             </TouchableOpacity>
           )}
         </View>
@@ -506,6 +553,12 @@ export default function Notes() {
           contentContainerStyle={styles.listContent}
         />
       )}
+      <MemberSelectionModal
+        visible={memberModalVisible}
+        onClose={() => setMemberModalVisible(false)}
+        onSelectMember={handleMemberSelected}
+        title="Share Memo Access"
+      />
     </SafeAreaView>
   );
 }
@@ -573,7 +626,7 @@ const styles = StyleSheet.create({
   filterChip: {
     paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 20,
+    borderRadius: 30,
     backgroundColor: COLORS.white,
     borderWidth: 1,
     borderColor: COLORS.gray[200],
@@ -593,6 +646,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 16,
+    paddingBottom: 100,
   },
   memoCard: {
     backgroundColor: COLORS.white,
@@ -769,7 +823,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.gray[200],
     paddingVertical: 12,
     paddingHorizontal: 24,
-    borderRadius: 8,
+    borderRadius: 30,
     marginTop: 16,
   },
   emptyStateButtonText: {
@@ -781,7 +835,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#667eea',
     paddingVertical: 14,
     paddingHorizontal: 28,
-    borderRadius: 12,
+    borderRadius: 30,
     marginTop: 20,
     shadowColor: '#667eea',
     shadowOffset: { width: 0, height: 3 },

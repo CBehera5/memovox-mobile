@@ -13,17 +13,21 @@ import {
   Alert,
   Animated,
   Dimensions,
-  Clipboard,
 } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
+import * as Clipboard from 'expo-clipboard';
+import * as FileSystem from 'expo-file-system';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { Audio } from 'expo-av';
 import StorageService from '../../src/services/StorageService';
 import PersonaService from '../../src/services/PersonaService';
+import NotificationService from '../../src/services/NotificationService';
 import VoiceMemoService from '../../src/services/VoiceMemoService';
 import AuthService from '../../src/services/AuthService';
 import AgentService from '../../src/services/AgentService';
+import AIService from '../../src/services/AIService';
 import { User, VoiceMemo, UserPersona, AgentAction, CompletionStats } from '../../src/types';
 import { COLORS, GRADIENTS, CATEGORY_COLORS, CATEGORY_ICONS, TYPE_BADGES } from '../../src/constants';
 import { formatRelativeTime, sortByDate } from '../../src/utils';
@@ -33,8 +37,14 @@ import SmartTaskCard from '../../src/components/SmartTaskCard';
 import AnimatedIconButton from '../../src/components/AnimatedIconButton';
 import AnimatedActionButton from '../../src/components/AnimatedActionButton';
 import TaskMenu from '../../src/components/TaskMenu';
+import MemberSelectionModal from '../../src/components/MemberSelectionModal';
 import TrialBanner from '../../src/components/TrialBanner';
 import GoogleCalendarSync from '../../src/components/GoogleCalendarSync';
+import { cleanImportedText, parseWhatsAppExport } from '../../src/utils/parsers';
+import { formatMemoForExport } from '../../src/utils/exportUtils';
+import { Share as RNShare } from 'react-native'; // Resize alias if needed or just use Share
+
+import { Bell, MessageSquare, Settings, Mic, Layout, CheckCircle, Calendar, Lightbulb, Bookmark, Trash2, Share2, FileText } from 'lucide-react-native';
 
 const { width } = Dimensions.get('window');
 
@@ -49,10 +59,12 @@ export default function Home() {
   const [todayActions, setTodayActions] = useState<AgentAction[]>([]);
   const [upcomingActions, setUpcomingActions] = useState<AgentAction[]>([]);
   const [completionStats, setCompletionStats] = useState<CompletionStats | null>(null);
-  const [smartSuggestions, setSmartSuggestions] = useState<AgentAction[]>([]);
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [allActions, setAllActions] = useState<AgentAction[]>([]);
-  
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [memberModalVisible, setMemberModalVisible] = useState(false);
+  const [selectedTaskIdForSharing, setSelectedTaskIdForSharing] = useState<string | null>(null);
+
   // Audio playback state
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [playingMemoId, setPlayingMemoId] = useState<string | null>(null);
@@ -80,6 +92,32 @@ export default function Home() {
   }, [sound]);
 
   // Audio playback functions
+  const handleShareTask = (taskId: string) => {
+    setSelectedTaskIdForSharing(taskId);
+    setMemberModalVisible(true);
+  };
+
+  const handleMemberSelected = async (targetUserId: string, targetUserName: string) => {
+    if (!selectedTaskIdForSharing || !user) return;
+
+    try {
+      const success = await AgentService.shareAction(
+        selectedTaskIdForSharing, 
+        targetUserId, 
+        targetUserName, 
+        user.name || 'A friend' // Pass sharer name
+      );
+      if (success) {
+        Alert.alert('Success', `Task shared with ${targetUserName}`);
+      } else {
+        Alert.alert('Error', 'Failed to share task');
+      }
+    } catch (error) {
+      console.error('Error sharing task:', error);
+      Alert.alert('Error', 'An error occurred while sharing');
+    }
+  };
+
   const playAudio = async (memo: VoiceMemo) => {
     try {
       // If already playing this memo, pause it
@@ -139,6 +177,72 @@ export default function Home() {
       }
     } catch (error) {
       console.error('Error stopping audio:', error);
+    }
+  };
+
+  const processImportedText = async (text: string, title: string) => {
+    try {
+      if (!text || text.trim().length === 0) {
+        Alert.alert('Empty Content', 'The imported content appears to be empty.');
+        return;
+      }
+
+      // Initial cleanup
+      let parsedText = text;
+      // Heuristic: if it looks like a WhatsApp export (contains many timestamps), try to clean it
+      if (text.match(/\d{1,2}:\d{2}/) && (text.includes('Messages') || text.includes('encrypted'))) {
+        parsedText = parseWhatsAppExport(text);
+      } else {
+        parsedText = cleanImportedText(text);
+      }
+
+      const newMemo: VoiceMemo = {
+        id: Date.now().toString(),
+        userId: user?.id || 'current-user',
+        audioUri: 'imported-text', // Special marker
+        transcription: parsedText,
+        category: 'Notes',
+        type: 'note',
+        title: `Import: ${title}`,
+        duration: 0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        isCompleted: false
+      };
+
+      // Use VoiceMemoService to save (handles sync and local fallback)
+      await VoiceMemoService.saveMemo(newMemo);
+      
+      // Trigger AI Analysis in background
+      Alert.alert(
+        'Import Successful', 
+        'Content imported! AI is analyzing it now...',
+        [{ text: 'OK', onPress: () => loadData() }]
+      );
+      
+      // Analyze
+      try {
+        const result = await AIService.analyzeMemo(newMemo.transcription);
+        const updatedMemo = { ...newMemo, aiAnalysis: result.analysis };
+        
+        // Update memo with analysis
+        await VoiceMemoService.updateMemo(updatedMemo);
+        
+        // Trigger Persona Update
+        if (user) {
+          const allMemos = await VoiceMemoService.getUserMemos(user.id);
+          await PersonaService.updatePersona(user.id, allMemos);
+        }
+
+        loadData(); // Refresh to show analysis
+      } catch (err) {
+        console.error('AI Analysis failed:', err);
+        // Don't show alert here to avoid spamming, just log it. The memo is saved.
+      }
+      
+    } catch (error) {
+      console.error('Processing error:', error);
+      Alert.alert('Import Failed', 'Could not process the imported text.');
     }
   };
 
@@ -212,9 +316,6 @@ export default function Home() {
       });
       setAllActions(sortedActions);
 
-      // Get smart suggestions (old/unacted tasks)
-      const suggestions = await AgentService.getSmartSuggestions(userId);
-      setSmartSuggestions(suggestions.slice(0, 3)); // Show top 3
     } catch (error) {
       console.error('Error loading agent data:', error);
     }
@@ -500,6 +601,7 @@ export default function Home() {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
+        contentContainerStyle={{ paddingBottom: 100 }}
       >
         {/* Trial Banner */}
         <TrialBanner />
@@ -509,9 +611,6 @@ export default function Home() {
           <View style={styles.headerContent}>
             <View style={styles.headerLeft}>
               <Text style={styles.greeting}>Hello, {user?.name?.split(' ')[0] || 'there'}! 👋</Text>
-              <Text style={styles.subtitle}>
-                What would you like to capture today?
-              </Text>
             </View>
             
             <View style={styles.headerIcons}>
@@ -520,21 +619,30 @@ export default function Home() {
                 style={styles.headerIconButton}
                 onPress={() => {
                   // Filter actions for today and overdue
-                  const today = new Date();
-                  today.setHours(0, 0, 0, 0);
-                  
                   const todayActions = allActions.filter(action => {
                     if (!action.dueDate) return false;
-                    const dueDate = new Date(action.dueDate);
-                    dueDate.setHours(0, 0, 0, 0);
-                    return dueDate.getTime() === today.getTime();
+                    const actionDateStr = action.dueDate.split('T')[0];
+                    const todayStr = new Date().toISOString().split('T')[0]; 
+                    // Note: new Date().toISOString() gives UTC date. 
+                    // But we want local today.
+                    const localToday = new Date();
+                    localToday.setHours(0,0,0,0);
+                    
+                    const [y, m, d] = actionDateStr.split('-').map(Number);
+                    const actionDate = new Date(y, m - 1, d);
+                    
+                    return actionDate.getTime() === localToday.getTime();
                   });
                   
                   const overdueActions = allActions.filter(action => {
-                    if (!action.dueDate) return false;
-                    const dueDate = new Date(action.dueDate);
-                    dueDate.setHours(0, 0, 0, 0);
-                    return dueDate.getTime() < today.getTime() && action.status === 'pending';
+                    if (!action.dueDate || action.status !== 'pending') return false;
+                    const actionDateStr = action.dueDate.split('T')[0];
+                    const [y, m, d] = actionDateStr.split('-').map(Number);
+                    const actionDate = new Date(y, m - 1, d);
+                    const localToday = new Date();
+                    localToday.setHours(0,0,0,0);
+                    
+                    return actionDate.getTime() < localToday.getTime();
                   });
                   
                   const totalCount = todayActions.length + overdueActions.length;
@@ -582,17 +690,22 @@ export default function Home() {
                   }
                 }}
               >
-                <Text style={styles.headerIcon}>🔔</Text>
+                <Bell size={20} color={COLORS.dark} />
                 {(() => {
                   const today = new Date();
                   today.setHours(0, 0, 0, 0);
                   
                   const count = allActions.filter(action => {
                     if (!action.dueDate || action.status !== 'pending') return false;
-                    const dueDate = new Date(action.dueDate);
-                    dueDate.setHours(0, 0, 0, 0);
-                    // Include today's tasks and overdue tasks
-                    return dueDate.getTime() <= today.getTime();
+                    
+                    // Parse YYYY-MM-DD string as local date
+                    // action.dueDate is ISO string (UTC) e.g. "2023-11-20T00:00:00.000Z"
+                    // We want to check if that DATE matches today or earlier
+                    const actionDateStr = action.dueDate.split('T')[0];
+                    const [y, m, d] = actionDateStr.split('-').map(Number);
+                    const actionDate = new Date(y, m - 1, d); // Local midnight
+                    
+                    return actionDate.getTime() <= today.getTime();
                   }).length;
                   
                   return count > 0 ? (
@@ -603,10 +716,16 @@ export default function Home() {
                 })()}
               </TouchableOpacity>
 
-              {/* Messages Icon - Shows group plans count (placeholder for future feature) */}
+              {/* Messages Icon - Shows group plans count */}
               <TouchableOpacity 
                 style={styles.headerIconButton}
                 onPress={() => {
+                  // Mark as read when opening (mock behavior until UI exists)
+                  if (user?.id) {
+                    NotificationService.markNotificationsAsRead(user.id);
+                    setUnreadCount(0);
+                  }
+                  
                   Alert.alert(
                     'Group Plans',
                     'Collaborate with others on shared tasks! This feature is coming soon.\n\n💡 You\'ll be able to:\n• Share memos with groups\n• Collaborate on tasks\n• Track team progress',
@@ -614,11 +733,17 @@ export default function Home() {
                   );
                 }}
               >
-                <Text style={styles.headerIcon}>💬</Text>
-                {/* Placeholder badge - will show actual count when feature is implemented */}
+                <MessageSquare size={20} color={COLORS.dark} />
+                {unreadCount > 0 && (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{unreadCount}</Text>
+                  </View>
+                )}
+                {unreadCount === 0 && (
                 <View style={[styles.badge, styles.badgeInactive]}>
                   <Text style={styles.badgeText}>0</Text>
                 </View>
+                )}
               </TouchableOpacity>
 
               {/* Settings Icon */}
@@ -626,16 +751,13 @@ export default function Home() {
                 style={styles.headerIconButton}
                 onPress={() => router.push('/(tabs)/profile')}
               >
-                <Text style={styles.headerIcon}>⚙️</Text>
+                <Settings size={20} color={COLORS.dark} />
               </TouchableOpacity>
             </View>
           </View>
         </LinearGradient>
 
-        {/* Google Calendar Connect Banner */}
-        <View style={styles.calendarBannerSection}>
-          <GoogleCalendarSync />
-        </View>
+
 
         {/* Empty State for New Users */}
         {memos.length === 0 && (
@@ -775,10 +897,55 @@ export default function Home() {
                             <Text style={styles.memoTaskTime}>
                               {action.dueDate ? formatRelativeTime(action.dueDate) : formatRelativeTime(action.createdAt)}
                             </Text>
+                            {action.shared_with && action.shared_with.length > 0 && (
+                              <View style={{ flexDirection: 'row', marginLeft: 4 }}>
+                                {action.shared_with.slice(0, 3).map((member, idx) => (
+                                  <View 
+                                    key={idx} 
+                                    style={{
+                                      width: 20, 
+                                      height: 20, 
+                                      borderRadius: 10, 
+                                      backgroundColor: COLORS.primary, 
+                                      marginLeft: idx > 0 ? -8 : 0,
+                                      borderWidth: 1.5,
+                                      borderColor: COLORS.white,
+                                      alignItems: 'center',
+                                      justifyContent: 'center'
+                                    }}
+                                  >
+                                    <Text style={{ fontSize: 10, color: '#fff', fontWeight: 'bold' }}>
+                                      {member.name.charAt(0).toUpperCase()}
+                                    </Text>
+                                  </View>
+                                ))}
+                                {action.shared_with.length > 3 && (
+                                  <View style={{
+                                    width: 20, 
+                                    height: 20, 
+                                    borderRadius: 10, 
+                                    backgroundColor: COLORS.gray[400], 
+                                    marginLeft: -8,
+                                    borderWidth: 1.5,
+                                    borderColor: COLORS.white,
+                                    alignItems: 'center',
+                                    justifyContent: 'center'
+                                  }}>
+                                    <Text style={{ fontSize: 8, color: '#fff', fontWeight: 'bold' }}>+{action.shared_with.length - 3}</Text>
+                                  </View>
+                                )}
+                              </View>
+                            )}
                             <TaskMenu
                               menuItems={[
                                 {
-                                  icon: '💡',
+                                  icon: '👥',
+                                  label: 'Add Member',
+                                  onPress: () => handleShareTask(action.id),
+                                  backgroundColor: '#E3F2FD'
+                                },
+                                {
+                                  icon: <Lightbulb size={20} color={COLORS.white} />,
                                   label: 'Insight',
                                   backgroundColor: COLORS.primary,
                                   onPress: () => {
@@ -806,7 +973,7 @@ export default function Home() {
                                   },
                                 },
                                 {
-                                  icon: '💾',
+                                  icon: <Bookmark size={20} color={COLORS.white} />,
                                   label: 'Save for Later',
                                   backgroundColor: '#34C759',
                                   onPress: async () => {
@@ -817,7 +984,7 @@ export default function Home() {
                                   },
                                 },
                                 {
-                                  icon: '🗑️',
+                                  icon: <Trash2 size={20} color={COLORS.white} />,
                                   label: 'Delete',
                                   backgroundColor: '#FF3B30',
                                   destructive: true,
@@ -894,14 +1061,43 @@ export default function Home() {
             onPress={() => {
               Alert.alert(
                 'Import Conversations',
-                'Import text files or conversations from your local drive to analyze with AI',
+                'Import text files or conversations to analyze with AI',
                 [
                   { text: 'Cancel', style: 'cancel' },
                   { 
+                    text: 'Paste from Clipboard', 
+                    onPress: async () => {
+                      const hasString = await Clipboard.hasStringAsync();
+                      if (hasString) {
+                        const content = await Clipboard.getStringAsync();
+                        processImportedText(content, 'Clipboard content');
+                      } else {
+                        Alert.alert('Clipboard Empty', 'No text found in clipboard');
+                      }
+                    }
+                  },
+                  { 
                     text: 'Choose File', 
-                    onPress: () => {
-                      // TODO: Implement file picker
-                      Alert.alert('Coming Soon', 'File import feature will be available soon!');
+                    onPress: async () => {
+                      try {
+                        const result = await DocumentPicker.getDocumentAsync({
+                          type: ['text/plain', 'application/pdf'],
+                          copyToCacheDirectory: true
+                        });
+                        
+                        if (!result.canceled && result.assets && result.assets.length > 0) {
+                          const file = result.assets[0];
+                          if (file.mimeType === 'text/plain') {
+                             const content = await FileSystem.readAsStringAsync(file.uri);
+                             processImportedText(content, file.name);
+                          } else {
+                            Alert.alert('Unsupported File', 'Currently only .txt files are supported for direct import.');
+                          }
+                        }
+                      } catch (err) {
+                        console.error('Import error:', err);
+                        Alert.alert('Error', 'Failed to read file');
+                      }
                     }
                   }
                 ]
@@ -950,6 +1146,12 @@ export default function Home() {
         </>
         )}
       </ScrollView>
+      <MemberSelectionModal
+        visible={memberModalVisible}
+        onClose={() => setMemberModalVisible(false)}
+        onSelectMember={handleMemberSelected}
+        title="Share Task"
+      />
     </SafeAreaView>
   );
 };
@@ -962,7 +1164,7 @@ const styles = StyleSheet.create({
   header: {
     padding: 24,
     paddingTop: 16,
-    paddingBottom: 32,
+    paddingBottom: 20, // Reduced from 32
   },
   headerContent: {
     flexDirection: 'row',
@@ -979,9 +1181,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   headerIconButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
@@ -1013,10 +1215,10 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   greeting: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: COLORS.white,
-    marginBottom: 8,
+    fontSize: 24,
+    fontFamily: 'Inter_700Bold',
+    color: COLORS.textPrimary,
+    marginBottom: 4,
   },
   subtitle: {
     fontSize: 16,
@@ -1033,9 +1235,9 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 20,
-    fontWeight: '600',
-    color: COLORS.dark,
-    marginBottom: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: COLORS.textPrimary,
+    marginBottom: 16,
   },
   urgencyCard: {
     backgroundColor: COLORS.white,
@@ -1214,7 +1416,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 20,
-    borderRadius: 16,
+    borderRadius: 28,
     gap: 12,
   },
   quickActionIcon: {
@@ -1329,7 +1531,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#667eea',
     paddingVertical: 16,
     paddingHorizontal: 32,
-    borderRadius: 12,
+    borderRadius: 28,
     shadowColor: '#667eea',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
@@ -1371,7 +1573,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    borderRadius: 20,
+    borderRadius: 30,
     gap: 6,
   },
   bulkActionIcon: {
@@ -1475,7 +1677,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary,
     paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 8,
+    borderRadius: 30,
     alignSelf: 'flex-start',
   },
   carouselCompleteButtonText: {
@@ -1514,7 +1716,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     paddingVertical: 20,
     paddingHorizontal: 12,
-    borderRadius: 16,
+    borderRadius: 30,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,

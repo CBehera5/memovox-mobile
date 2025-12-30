@@ -63,16 +63,38 @@ class PersonaService {
   }
 
   private analyzeCommunicationStyle(memos: VoiceMemo[]): string {
-    // Analyze average memo length, complexity, etc.
-    const avgLength = memos.reduce((sum, memo) => sum + memo.transcription.length, 0) / memos.length;
+    // 1. Analyze detected tones from AI analysis
+    const toneCounts: Record<string, number> = {};
+    let toneMemosCount = 0;
+
+    memos.forEach(memo => {
+      if (memo.aiAnalysis?.tone) {
+        const tone = memo.aiAnalysis.tone.toLowerCase();
+        toneCounts[tone] = (toneCounts[tone] || 0) + 1;
+        toneMemosCount++;
+      }
+    });
+
+    const topTone = Object.entries(toneCounts).sort(([, a], [, b]) => b - a)[0]?.[0];
+
+    // 2. Analyze average memo length (legacy fallback/augment)
+    const avgLength = memos.reduce((sum, memo) => sum + memo.transcription.length, 0) / (memos.length || 1);
     
+    let lengthStyle = 'moderate';
     if (avgLength < 50) {
-      return 'concise';
-    } else if (avgLength < 150) {
-      return 'moderate';
-    } else {
-      return 'detailed';
+      lengthStyle = 'concise';
+    } else if (avgLength > 150) {
+      lengthStyle = 'detailed';
     }
+
+    // Combine them if possible
+    if (topTone) {
+      // Capitalize first letter
+      const formattedTone = topTone.charAt(0).toUpperCase() + topTone.slice(1);
+      return `${formattedTone} & ${lengthStyle}`;
+    }
+
+    return lengthStyle; // Fallback to length-based
   }
 
   private determineActiveHours(memos: VoiceMemo[]): { start: number; end: number } {

@@ -314,11 +314,11 @@ Return format:
     } else {
       // General greeting for planning mode
       const greeting = language === 'en'
-        ? `Hello! I'm JEETU, your AI planning companion 🤖
+        ? `Hello! I'm JEETU 🤖
 
-I'm here to help you plan anything - from daily tasks to complex events!
+I'm here to help you organize your thoughts and plans - whether it's daily tasks or big events!
 
-✨ **What I can do:**
+✨ **We can work on:**
 • Plan events and meetings
 • Create detailed task lists  
 • Set up reminders and follow-ups

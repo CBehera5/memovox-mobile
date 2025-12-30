@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 
 interface MenuItem {
-  icon: string;
+  icon: string | React.ReactNode;
   label: string;
   onPress: () => void;
   backgroundColor?: string;
@@ -91,7 +91,11 @@ export default function TaskMenu({ menuItems }: TaskMenuProps) {
                     { backgroundColor: item.backgroundColor || '#007AFF' },
                   ]}
                 >
-                  <Text style={styles.menuItemIcon}>{item.icon}</Text>
+                  {typeof item.icon === 'string' ? (
+                    <Text style={styles.menuItemIcon}>{item.icon}</Text>
+                  ) : (
+                    item.icon
+                  )}
                 </View>
                 <Text
                   style={[

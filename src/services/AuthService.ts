@@ -4,6 +4,7 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as WebBrowser from 'expo-web-browser';
 import { supabase } from '../config/supabase';
 import { User } from '../types';
 import StorageService from './StorageService';
@@ -146,6 +147,7 @@ class AuthService {
       // Step 2: Clear all local storage data
       await StorageService.clearUser();
       await StorageService.clearAuthToken();
+      await StorageService.removeItem('google_provider_token');
       console.log('✅ Local storage cleared');
       
       // Step 3: Clear AsyncStorage Supabase keys (belt and suspenders)
@@ -344,13 +346,20 @@ class AuthService {
    */
   async signInWithGoogle(): Promise<{ user: User; token: string; isAuthenticated: boolean }> {
     try {
-      console.log('🔵 Starting Google Sign-In');
+      console.log('🔵 Starting Google Sign-In with manual browser launch');
+      
+      const redirectUri = 'memovox://auth/callback';
       
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: 'memovox://auth/callback',
-          skipBrowserRedirect: false,
+          redirectTo: redirectUri,
+          skipBrowserRedirect: true, // we handle it manually
+          scopes: 'openid profile email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events',
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'consent',
+          },
         },
       });
 
@@ -359,12 +368,28 @@ class AuthService {
         throw new Error(error.message || 'Google sign-in failed');
       }
 
-      // The actual user data will come through the auth state change
-      // This is just to initiate the OAuth flow
-      console.log('✅ Google OAuth flow initiated - opening browser');
+      if (!data.url) {
+        console.error('No auth URL returned from Supabase');
+        throw new Error('No auth URL returned. Please check Supabase configuration.');
+      }
+
+      console.log('✅ Google OAuth URL received, opening WebBrowser...');
       
-      // Return a pending state - the actual authentication happens via redirect
-      // Don't throw an error, just return empty values
+      // Open the browser session
+      const result = await WebBrowser.openAuthSessionAsync(
+        data.url,
+        redirectUri 
+      );
+
+      console.log('WebBrowser result:', result);
+
+      if (result.type === 'success' && result.url) {
+        // Handle the deep link if returned directly (iOS mostly, but robustness for Android)
+        return this.handleOAuthCallback(result.url);
+      }
+      
+      // On Android, the result might be 'dismiss' even if successful if the deep link opens the app "over" the browser
+      // So we return a placeholder state here, as the deep link handler in _layout.tsx will catch the actual callback
       return {
         user: {} as User,
         token: '',
@@ -422,6 +447,15 @@ class AuthService {
       // Save to local storage
       await StorageService.setUser(user);
       await StorageService.setAuthToken(data.session.access_token);
+
+      // EXTRACT AND SAVE PROVIDER TOKEN
+      if (data.session.provider_token) {
+        console.log('✅ Provider token found in session, saving locally...');
+        await StorageService.setItem('google_provider_token', data.session.provider_token);
+      } else {
+        console.warn('⚠️ No provider token found in OAuth callback session');
+        console.log('Session Keys:', Object.keys(data.session));
+      }
 
       console.log('✅ OAuth callback successful:', user.email);
 

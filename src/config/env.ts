@@ -8,10 +8,24 @@ import Constants from 'expo-constants';
 const expoConfig = Constants.expoConfig?.extra || {};
 
 // Load from environment only - NO hardcoded fallbacks for production security
-const GROQ_API_KEY = 
-  expoConfig.EXPO_PUBLIC_GROQ_API_KEY || 
-  process.env.EXPO_PUBLIC_GROQ_API_KEY ||
-  '';
+// Helper to get Valid Key or Fallback
+const getValidGroqKey = () => {
+    const expoKey = expoConfig.EXPO_PUBLIC_GROQ_API_KEY;
+    const processKey = process.env.EXPO_PUBLIC_GROQ_API_KEY;
+    
+    // Real keys are long. Placeholders are usually short.
+    // We prefer the Hardcoded Fallback if the detected key looks like a placeholder.
+    let candidate = (expoKey || processKey || '').trim();
+    
+    if (!candidate || candidate.length < 30 || candidate.includes('YOUR_')) {
+      console.warn('⚠️ Detected Invalid/Placeholder Groq Key. Please configure EXPO_PUBLIC_GROQ_API_KEY.');
+      return '';
+    }
+    
+    return candidate;
+  };
+  
+const GROQ_API_KEY = getValidGroqKey();
 
 const GOOGLE_CLIENT_ID_ANDROID = 
   expoConfig.EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID ||

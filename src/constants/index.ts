@@ -3,31 +3,47 @@
 import { MemoCategory } from '../types';
 
 export const COLORS = {
-  primary: '#6366f1',
-  secondary: '#8b5cf6',
-  accent: '#ec4899',
-  success: '#10b981',
-  warning: '#f59e0b',
-  error: '#ef4444',
-  dark: '#1f2937',
-  light: '#f3f4f6',
+  // Brand Identity (Professional Violet/Indigo)
+  primary: '#6366f1', // Indigo 500 - Main Actions
+  primaryDark: '#4f46e5', // Indigo 600 - Hover/Active
+  secondary: '#8b5cf6', // Violet 500 - Accents
+  accent: '#ec4899', // Pink 500 - Highlights
+  
+  // Functional Colors
+  success: '#10b981', // Emerald 500
+  warning: '#f59e0b', // Amber 500
+  error: '#ef4444', // Red 500
+  info: '#3b82f6', // Blue 500
+  
+  // Neutrals (Slate Scale - "The Professional Look")
+  dark: '#1e293b', // Slate 800 - Main Text
+  light: '#f8fafc', // Slate 50 - Backgrounds
   white: '#ffffff',
-  // Collaboration UI colors
-  background: '#F5F5F5',
-  textPrimary: '#1A1A1A',
-  textSecondary: '#666666',
-  border: '#E0E0E0',
+  
+  // UI Specifics
+  background: '#f8fafc', // Slate 50
+  surface: '#ffffff',
+  surfaceHighlight: '#f1f5f9', // Slate 100
+  
+  textPrimary: '#1e293b', // Slate 800
+  textSecondary: '#64748b', // Slate 500
+  textMuted: '#94a3b8', // Slate 400
+  
+  border: '#e2e8f0', // Slate 200
+  divider: '#f1f5f9', // Slate 100
+  
+  // Legacy mappings for backward compatibility
   gray: {
-    50: '#f9fafb',
-    100: '#f3f4f6',
-    200: '#e5e7eb',
-    300: '#d1d5db',
-    400: '#9ca3af',
-    500: '#6b7280',
-    600: '#4b5563',
-    700: '#374151',
-    800: '#1f2937',
-    900: '#111827',
+    50: '#f8fafc',
+    100: '#f1f5f9',
+    200: '#e2e8f0',
+    300: '#cbd5e1',
+    400: '#94a3b8',
+    500: '#64748b',
+    600: '#475569',
+    700: '#334155',
+    800: '#1e293b',
+    900: '#0f172a',
   },
   green: {
     50: '#f0fdf4',

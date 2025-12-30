@@ -2,8 +2,9 @@
 
 import { Tabs } from 'expo-router';
 import { COLORS } from '../../src/constants';
-import { Text, Platform } from 'react-native';
+import { View, Platform } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { Home, Mic, MessageSquare, FileText } from 'lucide-react-native';
 
 export default function TabsLayout() {
   return (
@@ -36,7 +37,7 @@ export default function TabsLayout() {
         options={{
           title: 'Home',
           tabBarIcon: ({ color, size }) => (
-            <TabIcon name="🏠" color={color} />
+            <Home size={24} color={color} />
           ),
         }}
       />
@@ -45,7 +46,7 @@ export default function TabsLayout() {
         options={{
           title: 'Record',
           tabBarIcon: ({ color, size }) => (
-            <TabIcon name="🎙️" color={color} />
+            <Mic size={24} color={color} />
           ),
         }}
       />
@@ -54,7 +55,7 @@ export default function TabsLayout() {
         options={{
           title: "Plan with AI",
           tabBarIcon: ({ color, size }) => (
-            <TabIcon name="💬" color={color} />
+            <MessageSquare size={24} color={color} />
           ),
         }}
       />
@@ -63,7 +64,7 @@ export default function TabsLayout() {
         options={{
           title: 'Notes',
           tabBarIcon: ({ color, size }) => (
-            <TabIcon name="📝" color={color} />
+            <FileText size={24} color={color} />
           ),
         }}
       />
@@ -94,13 +95,4 @@ export default function TabsLayout() {
     </Tabs>
     </SafeAreaProvider>
   );
-}
-
-interface TabIconProps {
-  name: string;
-  color: string;
-}
-
-function TabIcon({ name, color }: TabIconProps) {
-  return <Text style={{ fontSize: 24, opacity: color === COLORS.primary ? 1 : 0.5 }}>{name}</Text>;
 }

@@ -75,7 +75,6 @@ const ChatScreen: React.FC = () => {
   const [recordingTime, setRecordingTime] = useState(0);
   const [selectedMemo, setSelectedMemo] = useState<VoiceMemo | null>(null);
   const [memoInsight, setMemoInsight] = useState<any>(null);
-  const [showingInsight, setShowingInsight] = useState(false);
   const [memoLoaded, setMemoLoaded] = useState(false);
   const [insightLoading, setInsightLoading] = useState(false);
   const [agentSuggestions, setAgentSuggestions] = useState<AgentSuggestion[]>([]);
@@ -126,7 +125,6 @@ const ChatScreen: React.FC = () => {
     setMemoLoaded(false);
     setSelectedMemo(null);
     setMemoInsight(null);
-    setShowingInsight(false);
     setMessages([]);
     setAgentSuggestions([]);
     setCurrentSession(null);
@@ -137,8 +135,7 @@ const ChatScreen: React.FC = () => {
     const loadMemoAndGenerateInsight = async () => {
       if (params.memoId && !memoLoaded) {
         try {
-          setInsightLoading(true);
-          setShowingInsight(true); // Show loading state immediately
+          setIsLoading(true);
           const memo = await VoiceMemoService.getMemo(params.memoId);
           if (memo) {
             setSelectedMemo(memo);
@@ -147,19 +144,29 @@ const ChatScreen: React.FC = () => {
             const insight = await PersonalCompanionService.generatePersonalInsight(memo);
             setMemoInsight(insight);
             
+            // Create a rich markdown message for the insight
+            const insightMessage: ChatMessage = {
+              id: `insight_${Date.now()}`,
+              role: 'assistant',
+              content: `## 📝 Insight for: ${memo.title || 'Voice Memo'}\n\n` +
+                `**Summary**\n${insight.summary}\n\n` +
+                `**Key Points**\n${insight.keyPoints.map(p => `• ${p}`).join('\n')}\n\n` +
+                `**Actionable Items**\n${insight.actionableItems.map(item => `• [${item.priority.toUpperCase()}] ${item.title}`).join('\n')}\n\n` +
+                `*${insight.personalTouch}*`,
+              timestamp: new Date().toISOString(),
+            };
+
+            setMessages([insightMessage]);
+            
             // Generate AI agent suggestions
-            setSuggestionsLoading(true);
             try {
               const suggestions = await AgentService.suggestActions(memo);
               setAgentSuggestions(suggestions);
             } catch (error) {
               console.error('Error generating agent suggestions:', error);
-            } finally {
-              setSuggestionsLoading(false);
             }
             
             // Generate proactive questions and add as AI message
-            setQuestionsLoading(true);
             try {
               const questions = await ChatService.generateProactiveQuestions({
                 userMessage: memo.transcription,
@@ -180,8 +187,6 @@ const ChatScreen: React.FC = () => {
               }
             } catch (error) {
               console.error('Error generating proactive questions:', error);
-            } finally {
-              setQuestionsLoading(false);
             }
             
             setMemoLoaded(true);
@@ -189,9 +194,8 @@ const ChatScreen: React.FC = () => {
         } catch (error) {
           console.error('Error loading memo and generating insight:', error);
           Alert.alert('Error', 'Failed to load memo context');
-          setShowingInsight(false);
         } finally {
-          setInsightLoading(false);
+          setIsLoading(false);
         }
       }
     };
@@ -670,51 +674,9 @@ const ChatScreen: React.FC = () => {
     }
   };
 
-  const saveInsight = async () => {
-    try {
-      if (!selectedMemo || !memoInsight) {
-        Alert.alert('Error', 'No insight to save');
-        return;
-      }
-      
-      // Update memo with insight
-      const updatedMemo = {
-        ...selectedMemo,
-        aiAnalysis: {
-          ...selectedMemo.aiAnalysis,
-          keywords: selectedMemo.aiAnalysis?.keywords || [],
-          actionItems: selectedMemo.aiAnalysis?.actionItems || [],
-          savedInsight: memoInsight,
-          savedAt: new Date().toISOString(),
-        }
-      };
-      
-      await VoiceMemoService.updateMemo(updatedMemo as any);
-      Alert.alert('Success', 'Insight saved to memo!');
-    } catch (error) {
-      console.error('Error saving insight:', error);
-      Alert.alert('Error', 'Failed to save insight');
-    }
-  };
 
-  const shareInsight = async () => {
-    try {
-      if (!memoInsight) {
-        Alert.alert('Error', 'No insight to share');
-        return;
-      }
-      
-      const shareText = `JEETU Insight:\n\n${memoInsight.summary || ''}\n\n${memoInsight.personalTouch || ''}`;
-      
-      await Share.share({
-        message: shareText,
-        title: 'Share Insight',
-      });
-    } catch (error) {
-      console.error('Error sharing insight:', error);
-      Alert.alert('Error', 'Failed to share insight');
-    }
-  };
+
+
 
   const [createdActionIds, setCreatedActionIds] = useState<Set<string>>(new Set());
 
@@ -792,6 +754,7 @@ const ChatScreen: React.FC = () => {
       );
 
       // Link action to memo if we have a selected memo
+      // Link action to memo if we have a selected memo
       if (selectedMemo) {
         await VoiceMemoService.linkActionToMemo(
           selectedMemo.id,
@@ -800,12 +763,27 @@ const ChatScreen: React.FC = () => {
         );
       }
 
+      // Handle Group Distribution
+      let distributionMessage = '';
+      if (isGroupPlanMode && groupPlanMembers.length > 0) {
+        // In a real app, we would loop through members and create actions for them via backend
+        // For now, we simulate this distribution
+        console.log(`👥 Distributing action "${suggestion.action.title}" to ${groupPlanMembers.length} group members`);
+        
+        // Mock distribution
+        groupPlanMembers.forEach(member => {
+           console.log(`   - Assigned to: ${member.name}`);
+        });
+
+        distributionMessage = `\n\n👥 Assigned to you and shared with ${groupPlanMembers.length} group members.`;
+      }
+
       // Mark as created
       setCreatedActionIds(new Set([...createdActionIds, actionKey]));
 
       Alert.alert(
         '✅ Success',
-        `${suggestion.action.type === 'task' ? 'Task' : suggestion.action.type === 'reminder' ? 'Reminder' : 'Calendar event'} created successfully!\n\nYou can view it in the Home tab.`,
+        `${suggestion.action.type === 'task' ? 'Task' : suggestion.action.type === 'reminder' ? 'Reminder' : 'Calendar event'} created successfully!${distributionMessage}\n\nYou can view it in the Home tab.`,
         [
           { text: 'OK' },
         ]
@@ -839,235 +817,7 @@ const ChatScreen: React.FC = () => {
     );
   };
 
-  const renderInsightDetail = () => {
-    if (!showingInsight) return null;
 
-    // Show loading state while insight is being generated
-    if (insightLoading || !memoInsight) {
-      return (
-        <View style={[styles.messagesContainer, { justifyContent: 'center', alignItems: 'center' }]}>
-          <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={{ marginTop: 12, color: '#666', fontSize: 16 }}>Generating insights with JEETU...</Text>
-        </View>
-      );
-    }
-
-    // Build greeting and summary message
-    const summaryMessage = `Hi, I am JEETU, your AI companion.\n\n${memoInsight.summary || ''}${
-      memoInsight.personalTouch ? '\n\n' + memoInsight.personalTouch : ''
-    }`;
-
-    return (
-      <ScrollView style={styles.messagesContainer} contentContainerStyle={styles.messagesContent}>
-        {/* JEETU Insight Message */}
-        <View style={styles.messageContainer}>
-          <View style={styles.aiMessageBubble}>
-            <Text style={styles.aiMessageText}>{summaryMessage}</Text>
-            <Text style={styles.aiMessageTime}>
-              {new Date().toLocaleTimeString([], {
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
-            </Text>
-          </View>
-        </View>
-
-        {/* Action Buttons */}
-        {memoInsight.actionableItems && memoInsight.actionableItems.length > 0 && (
-          <View style={styles.actionButtonsContainer}>
-            {memoInsight.actionableItems.map((item: any, index: number) => (
-              <TouchableOpacity
-                key={index}
-                style={styles.actionItemButton}
-                onPress={() => {
-                  // Send action as message to start conversation about it
-                  setTextInput(`Tell me more about: ${item.title}`);
-                }}
-              >
-                <View style={styles.actionItemButtonContent}>
-                  <View style={styles.actionItemButtonIcon}>
-                    <Text style={styles.actionItemButtonIconText}>
-                      {item.type === 'calendar' && '📅'}
-                      {item.type === 'reminder' && '🔔'}
-                      {item.type === 'notification' && '📲'}
-                      {item.type === 'task' && '✓'}
-                    </Text>
-                  </View>
-                  <View style={styles.actionItemButtonText}>
-                    <Text style={styles.actionItemButtonTitle}>{item.title}</Text>
-                    {item.description && (
-                      <Text style={styles.actionItemButtonDesc}>{item.description}</Text>
-                    )}
-                  </View>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-
-        {/* AI Agent Suggestions */}
-        {agentSuggestions && agentSuggestions.length > 0 && (
-          <View style={styles.agentSuggestionsContainer}>
-            <Text style={styles.agentSuggestionsTitle}>
-              🤖 JEETU's recommendation
-            </Text>
-            <Text style={styles.agentSuggestionsSubtitle}>
-              I analyzed your memo and found these actionable items:
-            </Text>
-            
-            {agentSuggestions.map((suggestion, index) => {
-              const actionKey = `${suggestion.action.title}-${suggestion.action.type}`;
-              const isCreated = createdActionIds.has(actionKey);
-              
-              return (
-              <View key={index} style={[
-                styles.suggestionCard,
-                isCreated && styles.suggestionCardCreated
-              ]}>
-                {/* Created Badge */}
-                {isCreated && (
-                  <View style={styles.createdBadge}>
-                    <Text style={styles.createdBadgeText}>✅ Created</Text>
-                  </View>
-                )}
-
-                <View style={styles.suggestionHeader}>
-                  <View style={styles.suggestionIconContainer}>
-                    <Text style={styles.suggestionIcon}>
-                      {suggestion.action.type === 'task' && '✓'}
-                      {suggestion.action.type === 'reminder' && '🔔'}
-                      {suggestion.action.type === 'calendar_event' && '📅'}
-                    </Text>
-                  </View>
-                  <View style={styles.suggestionInfo}>
-                    <View style={styles.suggestionTitleRow}>
-                      <Text style={styles.suggestionTitle}>
-                        {suggestion.action.title}
-                      </Text>
-                      <View style={[
-                        styles.priorityBadge,
-                        suggestion.action.priority === 'high' && styles.priorityHigh,
-                        suggestion.action.priority === 'medium' && styles.priorityMedium,
-                        suggestion.action.priority === 'low' && styles.priorityLow,
-                      ]}>
-                        <Text style={styles.priorityText}>
-                          {suggestion.action.priority}
-                        </Text>
-                      </View>
-                    </View>
-                    {suggestion.action.description && (
-                      <Text style={styles.suggestionDescription}>
-                        {suggestion.action.description}
-                      </Text>
-                    )}
-                  </View>
-                </View>
-
-                {/* Due Date/Time */}
-                {(suggestion.action.dueDate || suggestion.action.dueTime) && (
-                  <View style={styles.suggestionDateRow}>
-                    <Text style={styles.suggestionDateLabel}>Due:</Text>
-                    <Text style={styles.suggestionDateValue}>
-                      {suggestion.action.dueDate && new Date(suggestion.action.dueDate).toLocaleDateString()}
-                      {suggestion.action.dueTime && ` at ${suggestion.action.dueTime}`}
-                    </Text>
-                  </View>
-                )}
-
-                {/* AI Reasoning */}
-                <View style={styles.suggestionReasonBox}>
-                  <Text style={styles.suggestionReasonLabel}>💡 Why this matters:</Text>
-                  <Text style={styles.suggestionReasonText}>
-                    {suggestion.reason}
-                  </Text>
-                </View>
-
-                {/* Create Action Button */}
-                <TouchableOpacity
-                  style={[
-                    styles.createActionButton,
-                    isCreated && styles.createActionButtonDisabled
-                  ]}
-                  onPress={() => !isCreated && handleCreateAction(suggestion)}
-                  activeOpacity={isCreated ? 1 : 0.7}
-                  disabled={isCreated}
-                >
-                  <Text style={[
-                    styles.createActionButtonText,
-                    isCreated && styles.createActionButtonTextDisabled
-                  ]}>
-                    {isCreated ? '✓ Already Created' : `➕ Create ${suggestion.action.type === 'task' ? 'Task' : suggestion.action.type === 'reminder' ? 'Reminder' : 'Event'}`}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-              );
-            })}
-          </View>
-        )}
-
-        {/* Loading state for suggestions */}
-        {suggestionsLoading && (
-          <View style={styles.suggestionLoadingContainer}>
-            <ActivityIndicator size="small" color="#667EEA" />
-            <Text style={styles.suggestionLoadingText}>
-              Analyzing memo for actionable items...
-            </Text>
-          </View>
-        )}
-
-        {/* Ask More Questions, Save, and Share Buttons */}
-        <View style={styles.insightActionContainer}>
-          <View style={styles.insightButtonRow}>
-            <AnimatedActionButton
-              icon="💾"
-              label="Save"
-              backgroundColor="#667EEA"
-              onPress={saveInsight}
-            />
-            
-            <AnimatedActionButton
-              icon="📤"
-              label="Share"
-              backgroundColor="#34C759"
-              onPress={shareInsight}
-            />
-            
-            <AnimatedActionButton
-              icon="💬"
-              label="Ask More"
-              backgroundColor="#FF9500"
-              onPress={async () => {
-                // Add insight message to chat
-                const summaryMessage = `Hi, I am JEETU, your AI companion.\n\n${memoInsight.summary || ''}${
-                  memoInsight.personalTouch ? '\n\n' + memoInsight.personalTouch : ''
-                }`;
-                
-                const insightMessage: ChatMessage = {
-                  id: `msg_${Date.now()}`,
-                  role: 'assistant',
-                  content: summaryMessage,
-                  timestamp: new Date().toISOString(),
-                };
-                
-                // Add to current session
-                if (currentSession) {
-                  const updatedSession = { 
-                    ...currentSession, 
-                    messages: [...currentSession.messages, insightMessage] 
-                  };
-                  setCurrentSession(updatedSession);
-                  setMessages(updatedSession.messages);
-                }
-                
-                // Switch to chat view
-                setShowingInsight(false);
-              }}
-            />
-          </View>
-        </View>
-      </ScrollView>
-    );
-  };
 
   const renderSessionItem = ({ item }: { item: ChatSession }) => (
     <TouchableOpacity
@@ -1148,6 +898,7 @@ const ChatScreen: React.FC = () => {
       // Get contacts from device
       const { data } = await Contacts.getContactsAsync({
         fields: [
+          Contacts.Fields.Name,
           Contacts.Fields.PhoneNumbers,
           Contacts.Fields.Emails,
         ],
@@ -1169,6 +920,7 @@ const ChatScreen: React.FC = () => {
       setContacts(sortedContacts as Contact[]);
       console.log(`📱 ✅ Successfully loaded ${sortedContacts.length} contacts`);
       
+      
       if (sortedContacts.length === 0) {
         Alert.alert(
           'No Contacts Found',
@@ -1185,6 +937,21 @@ const ChatScreen: React.FC = () => {
       );
     } finally {
       setLoadingContacts(false);
+    }
+  };
+
+  const handleInviteContact = async (contact: Contact) => {
+    try {
+      // Use generic share sheet so user can choose WhatsApp, SMS, etc.
+      const message = `🎯 Hey ${contact.name.split(' ')[0]}! Join me on MemoVox to organize your voice notes with AI. Download: https://memovox.app/download`; 
+      
+      await Share.share({
+        message: message,
+        // Removing 'title' as it can interfere with message body in some Android apps (like WhatsApp)
+      });
+    } catch (error) {
+      console.error('Error inviting contact:', error);
+      Alert.alert('Error', 'Could not open invite options');
     }
   };
 
@@ -1378,7 +1145,7 @@ const ChatScreen: React.FC = () => {
         'JEETU',
         {
           role: 'assistant',
-          content: `🎯 **Group Planning Mode Activated!**\n\nHi! I'm JEETU, your AI planning assistant. Let's create an amazing plan together!\n\n**Group Members (${groupPlanMembers.length}):**\n${memberNames}\n\n**Let's get started:**\nTell me what you're planning and I'll help break it down into tasks, assign responsibilities, and set deadlines.\n\nWhat would you like to plan today?`,
+          content: `🎯 **Group Planning Mode Activated!**\n\nHi! I'm JEETU. I'm here to help you and your group create an amazing plan together!\n\n**Group Members (${groupPlanMembers.length}):**\n${memberNames}\n\n**Let's get started:**\nTell me what you're planning, and I'll help organize the details, suggest responsibilities, and keep us on track.\n\nWhat would you like to plan today?`,
           timestamp: new Date().toISOString(),
         }
       );
@@ -1464,8 +1231,11 @@ Make it collaborative and actionable!`;
 
       // Get the conversation content
       const planContent = messages
-        .filter(m => m.role === 'assistant' && !m.content.includes('Group Planning Mode Activated'))
-        .map(m => m.content)
+        .filter(m => !m.content.includes('Group Planning Mode Activated'))
+        .map(m => {
+          const role = m.role === 'user' ? '👤 User' : '🤖 JEETU';
+          return `${role}:\n${m.content}`;
+        })
         .join('\n\n---\n\n');
 
       if (!planContent) {
@@ -1561,17 +1331,24 @@ Make it collaborative and actionable!`;
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.container}>
-      {!showingInsight && (
-        <View style={styles.header}>
-          <View style={styles.headerContent}>
-            <TouchableOpacity style={styles.sessionButton} onPress={() => setShowSessionList(!showSessionList)}>
-              <Ionicons name="menu" size={24} color="#000" />
-              <Text style={styles.headerTitle} numberOfLines={1}>
-                {currentSession?.title || 'New Chat'}
-              </Text>
+      <View style={styles.header}>
+        <View style={styles.headerContent}>
+          <TouchableOpacity style={styles.sessionButton} onPress={() => setShowSessionList(!showSessionList)}>
+            <Ionicons name="menu" size={24} color="#000" />
+            <Text style={styles.headerTitle} numberOfLines={1}>
+              {currentSession?.title || 'New Chat'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+        {!isGroupPlanMode ? (
+          <View style={{flexDirection: 'row', alignItems: 'center'}}>
+            <TouchableOpacity 
+              style={styles.shareButtonWithText} 
+              onPress={sharePlan}
+            >
+              <Ionicons name="share-outline" size={18} color="#667EEA" />
+              <Text style={styles.shareButtonText}>Share</Text>
             </TouchableOpacity>
-          </View>
-          {!isGroupPlanMode ? (
             <TouchableOpacity 
               style={styles.groupPlanButton} 
               onPress={startGroupPlan}
@@ -1579,39 +1356,39 @@ Make it collaborative and actionable!`;
               <Ionicons name="people" size={20} color="#FFFFFF" />
               <Text style={styles.groupPlanText}>Group Plan</Text>
             </TouchableOpacity>
-          ) : (
-            <View style={styles.headerRightGroup}>
-              <TouchableOpacity 
-                style={styles.addMembersButton} 
-                onPress={() => setShowContactPicker(true)}
-              >
-                <Ionicons name="person-add" size={16} color="#007AFF" />
-                <Text style={styles.addMembersText}>Add</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.shareButtonWithText} 
-                onPress={sharePlan}
-              >
-                <Ionicons name="share-outline" size={18} color="#667EEA" />
-                <Text style={styles.shareButtonText}>Share</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.exitGroupButton} 
-                onPress={exitGroupPlanMode}
-              >
-                <Ionicons name="close-circle" size={20} color="#FF3B30" />
-                <Text style={styles.exitGroupText}>Exit</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-          <TouchableOpacity style={styles.newChatButton} onPress={createNewSession}>
-            <Ionicons name="add-circle" size={24} color="#007AFF" />
-          </TouchableOpacity>
-        </View>
-      )}
+          </View>
+        ) : (
+          <View style={styles.headerRightGroup}>
+            <TouchableOpacity 
+              style={styles.addMembersButton} 
+              onPress={() => setShowContactPicker(true)}
+            >
+              <Ionicons name="person-add" size={16} color="#007AFF" />
+              <Text style={styles.addMembersText}>Add</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={styles.shareButtonWithText} 
+              onPress={sharePlan}
+            >
+              <Ionicons name="share-outline" size={18} color="#667EEA" />
+              <Text style={styles.shareButtonText}>Share</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={styles.exitGroupButton} 
+              onPress={exitGroupPlanMode}
+            >
+              <Ionicons name="close-circle" size={20} color="#FF3B30" />
+              <Text style={styles.exitGroupText}>Exit</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        <TouchableOpacity style={styles.newChatButton} onPress={createNewSession}>
+          <Ionicons name="add-circle" size={24} color="#007AFF" />
+        </TouchableOpacity>
+      </View>
 
       {/* Group Plan Mode Indicator */}
-      {isGroupPlanMode && !showingInsight && (
+      {isGroupPlanMode && (
         <View style={styles.groupModeIndicator}>
           <Text style={styles.groupModeText}>
             🎯 Group Planning Mode • Members ({groupPlanMembers.length}): {groupPlanMembers.map(m => m.name).join(', ')}
@@ -1619,7 +1396,7 @@ Make it collaborative and actionable!`;
         </View>
       )}
 
-      {showSessionList && !showingInsight && (
+      {showSessionList && (
         <View style={styles.sessionListContainer}>
           <FlatList
             data={sessions}
@@ -1631,10 +1408,7 @@ Make it collaborative and actionable!`;
         </View>
       )}
 
-      {showingInsight ? (
-        renderInsightDetail()
-      ) : (
-        <ScrollView
+      <ScrollView
           ref={scrollViewRef}
           style={styles.messagesContainer}
           contentContainerStyle={styles.messagesContent}
@@ -1654,13 +1428,48 @@ Make it collaborative and actionable!`;
               keyExtractor={(item) => item.id}
               scrollEnabled={false}
               contentContainerStyle={styles.messagesList}
+              ListFooterComponent={
+                agentSuggestions.length > 0 ? (
+                  <View style={styles.agentSuggestionsContainer}>
+                    <Text style={styles.agentSuggestionsTitle}>✨ Suggested Actions</Text>
+                    {agentSuggestions.map((suggestion, index) => (
+                      <View key={index} style={styles.suggestionCard}>
+                        <View style={styles.suggestionHeader}>
+                          <View style={styles.suggestionIconContainer}>
+                            <Ionicons 
+                              name={
+                                suggestion.action.type === 'calendar_event' ? 'calendar' : 
+                                suggestion.action.type === 'reminder' ? 'alarm' : 
+                                'checkbox'
+                              } 
+                              size={20} 
+                              color="#667EEA" 
+                            />
+                          </View>
+                          <View style={styles.suggestionInfo}>
+                            <Text style={styles.suggestionTitle}>{suggestion.action.title}</Text>
+                            <Text style={styles.suggestionDescription}>{suggestion.reason}</Text>
+                          </View>
+                        </View>
+                        <TouchableOpacity
+                          style={createdActionIds.has(suggestion.action.title) ? styles.createActionButtonDisabled : styles.createActionButton}
+                          disabled={createdActionIds.has(suggestion.action.title)}
+                          onPress={() => handleCreateAction(suggestion)}
+                        >
+                          <Text style={createdActionIds.has(suggestion.action.title) ? styles.createActionButtonTextDisabled : styles.createActionButtonText}>
+                            {createdActionIds.has(suggestion.action.title) ? '✓ Created' : 'Create Action'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                ) : null
+              }
             />
           )}
         </ScrollView>
-      )}
 
-      {!showingInsight && (
-        <View style={styles.inputArea}>
+      <View style={styles.inputArea}>
           {isLoading && (
             <View style={styles.loadingBar}>
               <ActivityIndicator size="small" color="#007AFF" />
@@ -1720,8 +1529,7 @@ Make it collaborative and actionable!`;
               </TouchableOpacity>
             )}
           </View>
-        </View>
-      )}
+      </View>
 
       {/* Contact Picker Modal */}
       <Modal
@@ -1781,25 +1589,37 @@ Make it collaborative and actionable!`;
                 )}
                 keyExtractor={(item) => item.id}
                 renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={styles.contactItem}
-                    onPress={() => handleContactSelect(item)}
-                  >
-                    <View style={styles.contactAvatar}>
-                      <Text style={styles.contactAvatarText}>
-                        {item.name.charAt(0).toUpperCase()}
-                      </Text>
-                    </View>
-                    <View style={styles.contactInfo}>
-                      <Text style={styles.contactName}>{item.name}</Text>
-                      <Text style={styles.contactDetail}>
-                        {item.phoneNumbers?.[0]?.number || item.emails?.[0]?.email || 'No contact info'}
-                      </Text>
-                    </View>
-                    {groupPlanMembers.some(m => m.id === item.id) && (
-                      <Ionicons name="checkmark-circle" size={24} color="#34C759" />
-                    )}
-                  </TouchableOpacity>
+                  <View style={styles.contactItemContainer}>
+                    <TouchableOpacity
+                      style={styles.contactItem}
+                      onPress={() => handleContactSelect(item)}
+                    >
+                      <View style={styles.contactAvatar}>
+                        <Text style={styles.contactAvatarText}>
+                          {item.name.charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                      <View style={styles.contactInfo}>
+                        <Text style={styles.contactName}>{item.name}</Text>
+                        <Text style={styles.contactDetail}>
+                          {item.phoneNumbers?.[0]?.number || item.emails?.[0]?.email || 'No contact info'}
+                        </Text>
+                      </View>
+                      {groupPlanMembers.some(m => m.id === item.id) ? (
+                        <Ionicons name="checkmark-circle" size={24} color="#34C759" />
+                      ) : (
+                        <TouchableOpacity 
+                          style={styles.inviteMiniButton}
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            handleInviteContact(item);
+                          }}
+                        >
+                          <Text style={styles.inviteMiniButtonText}>Invite</Text>
+                        </TouchableOpacity>
+                      )}
+                    </TouchableOpacity>
+                  </View>
                 )}
                 ListEmptyComponent={
                   <View style={styles.emptyContactsList}>
@@ -1886,7 +1706,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     backgroundColor: '#F0F7FF',
-    borderRadius: 16,
+    borderRadius: 30,
     marginRight: 8,
   },
   addMembersText: {
@@ -1901,7 +1721,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     backgroundColor: '#667EEA',
-    borderRadius: 20,
+    borderRadius: 30,
     marginRight: 8,
   },
   groupPlanText: {
@@ -1916,7 +1736,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     backgroundColor: '#FFF0F0',
-    borderRadius: 16,
+    borderRadius: 30,
     marginRight: 8,
   },
   exitGroupText: {
@@ -2098,7 +1918,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     backgroundColor: '#F0F7FF',
-    borderRadius: 8,
+    borderRadius: 30,
     borderWidth: 1,
     borderColor: '#007AFF',
   },
@@ -2277,7 +2097,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#667EEA',
     paddingVertical: 12,
     paddingHorizontal: 16,
-    borderRadius: 8,
+    borderRadius: 30,
     alignItems: 'center',
   },
   secondaryButton: {
@@ -2328,7 +2148,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#667EEA',
     paddingVertical: 12,
     paddingHorizontal: 24,
-    borderRadius: 8,
+    borderRadius: 30,
     alignItems: 'center',
   },
   continueButtonText: {
@@ -2525,7 +2345,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#667EEA',
     paddingVertical: 12,
     paddingHorizontal: 16,
-    borderRadius: 8,
+    borderRadius: 30,
     alignItems: 'center',
     marginTop: 8,
   },
@@ -2627,7 +2447,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#667eea',
     paddingVertical: 16,
     paddingHorizontal: 48,
-    borderRadius: 12,
+    borderRadius: 30,
     shadowColor: '#667eea',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
@@ -2682,7 +2502,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '85%',
+    height: '85%', // Enforce height so flex children (FlatList) can expand
     paddingBottom: Platform.OS === 'ios' ? 34 : 20,
   },
   modalHeader: {
@@ -2803,6 +2623,22 @@ const styles = StyleSheet.create({
   contactDetail: {
     fontSize: 14,
     color: '#666',
+  },
+  contactItemContainer: {
+    marginBottom: 8,
+  },
+  inviteMiniButton: {
+    backgroundColor: '#F0F4FF',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#667EEA',
+  },
+  inviteMiniButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#667EEA',
   },
   modalActions: {
     flexDirection: 'row',

@@ -5,6 +5,7 @@ import { Platform } from 'react-native';
 import { Notification, VoiceMemo } from '../types';
 import StorageService from './StorageService';
 import AgentService from './AgentService';
+import { supabase } from '../config/supabase';
 
 // Define notification categories with actions
 if (Platform.OS !== 'web') {
@@ -239,6 +240,71 @@ class NotificationService {
       await this.scheduleNotification(notification);
     } catch (error) {
       console.error('Error creating insight notification:', error);
+    }
+  }
+
+  /**
+   * Create a generic notification
+   */
+  async createNotification(params: {
+    userId: string;
+    title: string;
+    message: string;
+    type: 'system' | 'reminder' | 'insight' | 'followup';
+    data?: any;
+  }): Promise<void> {
+    try {
+      const notification: Notification = {
+        id: `notify_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        userId: params.userId,
+        memoId: params.data?.memoId || '',
+        type: params.type,
+        title: params.title,
+        body: params.message,
+        scheduledFor: new Date().toISOString(),
+        sent: false,
+        createdAt: new Date().toISOString(),
+        // Add extra data if needed, but Notification type might need extension if 'data' is not standard
+      };
+
+      // Persist to Supabase if needed, or at least StorageService
+      // Assuming StorageService syncs or we use Supabase directly here?
+      // Existing methods use StorageService.saveNotification.
+      // But we also want to ensure it reaches the user via Supabase for multi-device/push.
+      
+      // 1. Save to Supabase (so it syncs to user's other devices/shows in list)
+      const { error } = await supabase.from('notifications').insert({
+        id: notification.id,
+        user_id: notification.userId,
+        type: notification.type,
+        title: notification.title,
+        body: notification.body,
+        is_read: false,
+        created_at: notification.createdAt,
+        data: params.data
+      });
+
+      if (error) {
+        console.error('Error creating notification in Supabase:', error);
+      }
+
+      // 2. Schedule local notification immediately (if on the device)
+      // Note: This only works if we are the target user. 
+      // Since shareMemo runs on Sender's device, we CANNOT schedule a local notification for the Recipient here.
+      // The Recipient needs a real Push Notification service or a listener on Supabase changes.
+      // For now, inserting into Supabase is the "Signal". 
+      // The recipient's app (via Realtime or periodic fetch) would pick it up.
+      // HOWEVER, the standard `scheduleNotification` is for LOCAL only.
+      
+      // The user requested: "added member should get the notification".
+      // Writing to Supabase 'notifications' table is the correct step for an MVP without Push Server.
+      // The recipient's home.tsx polls for unread count, so the badge will update.
+      // To get a Pop-up on recipient device requires Supabase Realtime or true Push.
+      // I will assume Supabase persistence satisfies the "get the notification" (in the list/badge) requirement for now,
+      // as setting up FCM/APNS requires server-side keys which we don't have fully configured in this context.
+      
+    } catch (error) {
+      console.error('Error creating generic notification:', error);
     }
   }
 
@@ -523,6 +589,48 @@ class NotificationService {
       { label: '⚡ Urgent', value: 'urgent' },
       { label: '🎵 Melody', value: 'melody' },
     ];
+  }
+
+  /**
+   * Get unread notification count
+   */
+  async getUnreadNotificationCount(userId: string): Promise<number> {
+    try {
+      const { count, error } = await supabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('is_read', false);
+
+      if (error) {
+        console.error('Error fetching unread count:', error);
+        return 0;
+      }
+
+      return count || 0;
+    } catch (error) {
+      console.error('Error in getUnreadNotificationCount:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Mark all notifications as read
+   */
+  async markNotificationsAsRead(userId: string): Promise<void> {
+    try {
+      const { error } = await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('user_id', userId)
+        .eq('is_read', false);
+
+      if (error) {
+        console.error('Error marking notifications as read:', error);
+      }
+    } catch (error) {
+      console.error('Error in markNotificationsAsRead:', error);
+    }
   }
 }
 

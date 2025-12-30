@@ -1,6 +1,5 @@
 // app/(auth)/login.tsx
-
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -16,6 +15,7 @@ import {
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Constants from 'expo-constants';
 import AuthService from '../../src/services/AuthService';
 import { COLORS, GRADIENTS } from '../../src/constants';
 import { validateEmail } from '../../src/utils';
@@ -26,6 +26,8 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+
+
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -56,20 +58,16 @@ export default function Login() {
 
   const handleGoogleSignIn = async () => {
     setGoogleLoading(true);
+    console.log('🔴 Google Sign-In Button Pressed');
     try {
       await AuthService.signInWithGoogle();
       // OAuth flow will open browser - this is expected behavior
       // The app will receive the callback via deep link
       // Don't show an error - the user will be redirected back after signing in
     } catch (error: any) {
-      // Only show error if it's a real error (not the OAuth redirect)
-      const errorMsg = error.message || '';
-      if (!errorMsg.includes('OAuth') && 
-          !errorMsg.includes('redirect') && 
-          !errorMsg.includes('initiated')) {
-        Alert.alert('Error', 'Failed to start Google sign-in. Please try again.');
-      }
-      // If it's an OAuth flow message, just ignore it - this is normal
+      console.error('🔴 Google Sign-In Error:', error);
+      // Show ALL errors for debugging
+      Alert.alert('Google Sign-In Error', error.message || JSON.stringify(error));
     } finally {
       // Keep loading state for a moment to show the transition
       setTimeout(() => setGoogleLoading(false), 1000);
@@ -169,6 +167,8 @@ export default function Login() {
             >
               <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
             </TouchableOpacity>
+
+
 
             {/* Login Button */}
             <TouchableOpacity
@@ -313,7 +313,7 @@ const styles = StyleSheet.create({
   },
   loginButton: {
     backgroundColor: '#667eea',
-    borderRadius: 12,
+    borderRadius: 30,
     paddingVertical: 16,
     alignItems: 'center',
     shadowColor: '#667eea',
@@ -350,7 +350,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#e5e7eb',
-    borderRadius: 12,
+    borderRadius: 30,
     paddingVertical: 14,
     flexDirection: 'row',
     alignItems: 'center',

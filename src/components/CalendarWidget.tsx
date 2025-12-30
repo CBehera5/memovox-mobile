@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { COLORS } from '../constants';
 import { AgentAction } from '../types';
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon } from 'lucide-react-native';
 
 interface CalendarWidgetProps {
   actions: AgentAction[];
@@ -10,18 +11,23 @@ interface CalendarWidgetProps {
 }
 
 export default function CalendarWidget({ actions, onDatePress }: CalendarWidgetProps) {
-  const [currentDate] = useState(new Date());
+  const [currentDate, setCurrentDate] = useState(new Date());
   
-  // Get current week
+  // Get current week based on currentDate state
   const getWeekDays = () => {
     const week = [];
-    const today = new Date();
-    const dayOfWeek = today.getDay();
-    const diff = today.getDate() - dayOfWeek; // Start from Sunday
+    // Clone currentDate to avoid mutation
+    const current = new Date(currentDate);
+    const dayOfWeek = current.getDay();
+    const diff = current.getDate() - dayOfWeek; // Start from Sunday
+    
+    // Set to start of week
+    const startOfWeek = new Date(current);
+    startOfWeek.setDate(diff);
     
     for (let i = 0; i < 7; i++) {
-      const date = new Date(today);
-      date.setDate(diff + i);
+      const date = new Date(startOfWeek);
+      date.setDate(startOfWeek.getDate() + i);
       week.push(date);
     }
     
@@ -30,6 +36,19 @@ export default function CalendarWidget({ actions, onDatePress }: CalendarWidgetP
 
   const weekDays = getWeekDays();
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  // Navigation handlers
+  const prevWeek = () => {
+    const newDate = new Date(currentDate);
+    newDate.setDate(currentDate.getDate() - 7);
+    setCurrentDate(newDate);
+  };
+
+  const nextWeek = () => {
+    const newDate = new Date(currentDate);
+    newDate.setDate(currentDate.getDate() + 7);
+    setCurrentDate(newDate);
+  };
 
   // Check if a date has actions
   const hasActions = (date: Date) => {
@@ -66,12 +85,27 @@ export default function CalendarWidget({ actions, onDatePress }: CalendarWidgetP
     );
   };
 
+  const isSelectedMonth = (date: Date) => {
+    return date.getMonth() === currentDate.getMonth();
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.monthText}>
-          {currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-        </Text>
+        <View style={styles.headerTitleContainer}>
+          <CalendarIcon size={20} color={COLORS.primary} style={{ marginRight: 8 }} />
+          <Text style={styles.monthText}>
+            {currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+          </Text>
+        </View>
+        <View style={styles.navigationContainer}>
+          <TouchableOpacity onPress={prevWeek} style={styles.navButton}>
+            <ChevronLeft size={20} color={COLORS.gray[600]} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={nextWeek} style={styles.navButton}>
+            <ChevronRight size={20} color={COLORS.gray[600]} />
+          </TouchableOpacity>
+        </View>
       </View>
       
       <View style={styles.weekContainer}>
@@ -79,6 +113,7 @@ export default function CalendarWidget({ actions, onDatePress }: CalendarWidgetP
           const actionsOnDate = hasActions(date);
           const actionCount = getActionCount(date);
           const today = isToday(date);
+          const inCurrentMonth = isSelectedMonth(date);
           
           return (
             <TouchableOpacity
@@ -89,11 +124,19 @@ export default function CalendarWidget({ actions, onDatePress }: CalendarWidgetP
               ]}
               onPress={() => onDatePress?.(date)}
             >
-              <Text style={[styles.dayName, today && styles.todayText]}>
+              <Text style={[
+                styles.dayName, 
+                today && styles.todayText,
+                !inCurrentMonth && styles.mutedText
+              ]}>
                 {dayNames[index]}
               </Text>
               <View style={[styles.dateCircle, today && styles.todayCircle]}>
-                <Text style={[styles.dateText, today && styles.todayDateText]}>
+                <Text style={[
+                  styles.dateText, 
+                  today && styles.todayDateText,
+                  !inCurrentMonth && styles.mutedText
+                ]}>
                   {date.getDate()}
                 </Text>
               </View>
@@ -122,12 +165,31 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 16,
+  },
+  headerTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  navigationContainer: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  navButton: {
+    padding: 4,
+    borderRadius: 20,
+    backgroundColor: COLORS.gray[100],
   },
   monthText: {
     fontSize: 16,
     fontWeight: '600',
     color: COLORS.dark,
+  },
+  mutedText: {
+    color: COLORS.gray[400],
   },
   weekContainer: {
     flexDirection: 'row',

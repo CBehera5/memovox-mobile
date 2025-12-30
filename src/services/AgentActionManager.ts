@@ -100,6 +100,10 @@ class AgentActionManager {
       const createdActions: ActionItem[] = [];
       for (const actionReq of actions) {
         try {
+          // Inject context if available
+          if (context?.userId) actionReq.userId = context.userId;
+          if (context?.memoId) actionReq.createdFrom = context.memoId;
+
           // Execute the action
           const result = await ActionService.executeAction(actionReq);
 
