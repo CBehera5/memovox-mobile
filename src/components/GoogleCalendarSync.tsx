@@ -44,9 +44,48 @@ export default function GoogleCalendarSync({ onSync }: GoogleCalendarSyncProps) 
     setIsLoading(true);
     try {
       // Use consolidated auth flow
-      await AuthService.signInWithGoogle();
-      // Note: The actual sign-in happens via redirect, so we don't set isSignedIn(true) here immediately.
-      // The app will reload or handle the deep link callback.
+      // We wrap this in a sub-try/catch to suppress benign browser errors
+      try {
+        await AuthService.signInWithGoogle();
+      } catch (error: any) {
+        // Suppress "URL not found" or dismiss errors which often happen on Android 
+        // despite successful deep linking
+        const isBenign = 
+          error.message?.includes('URL not found') || 
+          error.message?.includes('User canceled') || 
+          error.message?.includes('dismiss') ||
+          error.message?.includes('null');
+          
+        if (!isBenign) {
+          throw error;
+        }
+        console.log('Ignored benign auth error, proceeding to verification:', error.message);
+      }
+
+      // Start polling for connection status
+      // We verify for up to 8 seconds to allow the deep link to process
+      let attempts = 0;
+      const interval = setInterval(async () => {
+        attempts++;
+        try {
+          const signedIn = await GoogleCalendarService.isSignedIn();
+          if (signedIn) {
+            clearInterval(interval);
+            setIsSignedIn(true);
+            await loadEventCount();
+            setIsLoading(false);
+            Alert.alert('Success', 'Google Calendar connected!');
+          } else if (attempts >= 10) { // 10 seconds timeout
+            clearInterval(interval);
+            setIsLoading(false);
+            // Don't show error on timeout, as user might have just cancelled.
+            // If they really failed, they can try again.
+          }
+        } catch (e) {
+          console.error('Polling error', e);
+        }
+      }, 1000);
+
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to sign in');
       setIsLoading(false);

@@ -24,7 +24,7 @@
         "gradleCommand": ":app:bundleRelease"
       },
       "env": {
-        "EXPO_PUBLIC_APP_URL": "memovox://"
+        "EXPO_PUBLIC_APP_URL": "https://www.memovox.in"
       }
     },
     "production-apk": {

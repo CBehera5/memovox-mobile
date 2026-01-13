@@ -9,6 +9,7 @@ import { useFonts, Inter_400Regular, Inter_600SemiBold, Inter_700Bold } from '@e
 import AIService from '../src/services/AIService';
 import NotificationService from '../src/services/NotificationService';
 import AuthService from '../src/services/AuthService';
+import { supabase } from '../src/config/supabase';
 
 export default function RootLayout() {
   const router = useRouter();
@@ -56,7 +57,24 @@ export default function RootLayout() {
       }
     };
 
+    // Initialize Services
     initialize();
+
+    // Listen for Auth State Changes (Critical for Session Persistence)
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log(`🔐 Auth State Change: ${event}`);
+      if (event === 'SIGNED_OUT') {
+        // Clear local storage if explicit sign out
+        await AuthService.logout(); 
+        router.replace('/(auth)/login');
+      } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        // Ensure local storage is synced
+        if (session?.user) {
+          // We don't necessarily redirect here to avoid interfering with deep links
+          // But this keeps the session alive
+        }
+      }
+    });
 
     // Handle OAuth deep links
     const handleDeepLink = async (event: { url: string }) => {
@@ -90,6 +108,7 @@ export default function RootLayout() {
 
     return () => {
       subscription.remove();
+      authListener.subscription.unsubscribe();
     };
   }, []);
 
@@ -106,7 +125,8 @@ export default function RootLayout() {
           contentStyle: { backgroundColor: '#f8fafc' }, // Set global background to Slate 50
         }}
       >
-        <Stack.Screen name="splash" options={{ headerShown: false }} />
+
+        <Stack.Screen name="(onboarding)" options={{ headerShown: false }} />
         <Stack.Screen name="(auth)" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="index" options={{ headerShown: false }} />

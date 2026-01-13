@@ -15,6 +15,8 @@ export interface ActionRequest {
   originalUserMessage: string;
   userId?: string;
   createdFrom?: string;
+  assignedToName?: string;
+  assignedToId?: string;
 }
 
 export interface ActionResult {

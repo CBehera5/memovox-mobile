@@ -9,10 +9,14 @@ import {
   ScrollView,
   ActivityIndicator,
   Platform,
+  Modal,
+  TouchableOpacity,
+  FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
+import { Globe, Check } from 'lucide-react-native';
 
 import AIService from '../../src/services/AIService';
 import AuthService from '../../src/services/AuthService';
@@ -22,6 +26,7 @@ import StorageService from '../../src/services/StorageService'; // Still needed 
 import SubscriptionService from '../../src/services/SubscriptionService';
 import PersonaService from '../../src/services/PersonaService';
 import GoogleCalendarService from '../../src/services/GoogleCalendarService';
+import LanguageService, { SUPPORTED_LANGUAGES } from '../../src/services/LanguageService';
 import { logger } from '../../src/services/Logger';
 
 import { VoiceMemo } from '../../src/types';
@@ -43,10 +48,16 @@ export default function Record() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [result, setResult] = useState<any>(null); // TODO: Type this properly with AnalysisResult
   const [usageStats, setUsageStats] = useState<any>(null);
+  
+  // Language State
+  const [currentLangCode, setCurrentLangCode] = useState(LanguageService.getCurrentLanguage());
+  const [langModalVisible, setLangModalVisible] = useState(false);
 
   useEffect(() => {
     loadUsageStats();
-  }, []);
+    // Refresh language on focus if needed, or simple sync
+    setCurrentLangCode(LanguageService.getCurrentLanguage());
+  }, []); // Note: If user changes lang in settings, this might be stale until reload. Ideally useFocusEffect.
 
   const loadUsageStats = async () => {
     try {
@@ -55,6 +66,13 @@ export default function Record() {
     } catch (error) {
       logger.error('Failed to load usage stats:', error);
     }
+  };
+  
+  const handleLanguageSelect = async (code: any) => {
+    await LanguageService.setLanguage(code);
+    setCurrentLangCode(code);
+    setLangModalVisible(false);
+    safeHaptics('impact');
   };
 
   const safeHaptics = async (type: 'impact' | 'notification' | 'success') => {
@@ -252,7 +270,7 @@ export default function Record() {
                                       endDate.setMinutes(startDate.getMinutes() + (memo.duration ? Math.ceil(memo.duration / 60) : 60)); // Default 1 hour
 
                                       await GoogleCalendarService.createEvent({
-                                          title: memo.title,
+                                          title: memo.title || 'Untitled',
                                           description: memo.transcription,
                                           startTime: startDate,
                                           endTime: endDate,
@@ -346,10 +364,24 @@ export default function Record() {
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <LinearGradient colors={GRADIENTS.primary} style={styles.header}>
-          <Text style={styles.headerTitle}>Voice Recorder</Text>
-          <Text style={styles.headerSubtitle}>
-            AI-powered transcription & organization
-          </Text>
+            <View style={styles.headerTopRow}>
+              <View>
+                <Text style={styles.headerTitle}>Voice Recorder</Text>
+                <Text style={styles.headerSubtitle}>
+                    AI-powered transcription & organization
+                </Text>
+              </View>
+              {/* Language Toggle Pill */}
+              <TouchableOpacity 
+                style={styles.langPill} 
+                onPress={() => setLangModalVisible(true)}
+              >
+                <Globe size={16} color="rgba(255,255,255,0.9)" />
+                <Text style={styles.langPillText}>
+                  {SUPPORTED_LANGUAGES[currentLangCode as keyof typeof SUPPORTED_LANGUAGES]?.nativeName || 'English'}
+                </Text>
+              </TouchableOpacity>
+            </View>
         </LinearGradient>
 
         {usageStats && (
@@ -389,6 +421,46 @@ export default function Record() {
           )}
         </View>
       </ScrollView>
+
+      {/* Language Selection Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={langModalVisible}
+        onRequestClose={() => setLangModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Input Language</Text>
+              <TouchableOpacity onPress={() => setLangModalVisible(false)}>
+                <Text style={styles.modalClose}>Close</Text>
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={Object.values(SUPPORTED_LANGUAGES)}
+              keyExtractor={(item) => item.code}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[
+                    styles.langOption,
+                    currentLangCode === item.code && styles.langOptionSelected
+                  ]}
+                  onPress={() => handleLanguageSelect(item.code)}
+                >
+                  <View>
+                    <Text style={styles.langOptionNative}>{item.nativeName}</Text>
+                    <Text style={styles.langOptionEnglish}>{item.name}</Text>
+                  </View>
+                  {currentLangCode === item.code && (
+                    <Check size={20} color={COLORS.primary} />
+                  )}
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -430,5 +502,77 @@ const styles = StyleSheet.create({
     marginTop: 16,
     fontSize: 16,
     color: COLORS.gray[600] || '#4b5563',
+  },
+  headerTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  langPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  langPillText: {
+    color: COLORS.white,
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+    maxHeight: '70%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: COLORS.dark,
+  },
+  modalClose: {
+    fontSize: 16,
+    color: COLORS.primary,
+    fontWeight: '600',
+  },
+  langOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.gray[100],
+  },
+  langOptionSelected: {
+    backgroundColor: '#EEF2FF',
+    marginHorizontal: -24,
+    paddingHorizontal: 24,
+  },
+  langOptionNative: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: COLORS.dark,
+    marginBottom: 2,
+  },
+  langOptionEnglish: {
+    fontSize: 14,
+    color: COLORS.gray[500],
   },
 });

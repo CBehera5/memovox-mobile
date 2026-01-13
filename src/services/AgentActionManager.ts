@@ -25,6 +25,8 @@ export interface ActionItem {
   memoId?: string; // If action was created from a specific memo
   memoTitle?: string;
   result?: ActionResult;
+  assignedToId?: string;
+  assignedToName?: string;
 }
 
 export interface ActionStats {
@@ -64,7 +66,7 @@ class AgentActionManager {
    */
   async processMessageForActions(
     userMessage: string,
-    context?: { memoId?: string; memoTitle?: string; userId?: string }
+    context?: { memoId?: string; memoTitle?: string; userId?: string; members?: { id: string; name: string }[] }
   ): Promise<ActionItem[]> {
     try {
       console.log('Processing message for actions:', userMessage);
@@ -94,14 +96,28 @@ class AgentActionManager {
       }
 
       // Use AI to extract multiple action requests from the message
-      const actions = await this.extractActionsFromMessage(userMessage);
+      const actions = await this.extractActionsFromMessage(userMessage, context?.members);
 
       // Process each action
       const createdActions: ActionItem[] = [];
       for (const actionReq of actions) {
         try {
           // Inject context if available
-          if (context?.userId) actionReq.userId = context.userId;
+          // If action has assigned identifier, use it, otherwise use context userId
+          let targetUserId = context?.userId;
+          
+          if (actionReq.assignedToName && context?.members) {
+             const match = context.members.find(m => 
+                m.name.toLowerCase().includes(actionReq.assignedToName!.toLowerCase()) ||
+                actionReq.assignedToName!.toLowerCase().includes(m.name.toLowerCase())
+             );
+             if (match) {
+               targetUserId = match.id;
+               actionReq.assignedToId = match.id;
+             }
+          }
+
+          if (targetUserId) actionReq.userId = targetUserId;
           if (context?.memoId) actionReq.createdFrom = context.memoId;
 
           // Execute the action
@@ -125,8 +141,10 @@ class AgentActionManager {
             };
 
             // Save action item using AgentService format (same storage location)
-            if (context?.userId) {
-              await this.saveActionItem(actionItem, context.userId);
+            // Save to the TARGET user's list (if assigned) or current user
+            const saveToId = actionReq.assignedToId || context?.userId;
+            if (saveToId) {
+              await this.saveActionItem(actionItem, saveToId);
             } else {
               console.warn('No userId in context, action may not appear on home page');
               await this.saveActionItem(actionItem);
@@ -157,7 +175,7 @@ class AgentActionManager {
   /**
    * Extract multiple action requests from a user message using AI
    */
-  private async extractActionsFromMessage(userMessage: string): Promise<ActionRequest[]> {
+  private async extractActionsFromMessage(userMessage: string, members?: { id: string, name: string }[]): Promise<ActionRequest[]> {
     if (!this.groqClient) {
       console.warn('Groq client not initialized');
       return [];
@@ -171,6 +189,9 @@ Extract multiple actions if present. For each action, determine:
 3. Description: Details about the action
 4. Due time: When it should happen (natural language)
 5. Priority: 'high', 'medium', or 'low'
+6. Assigned To: Name of person if explicitly mentioned (e.g. "for Bob")
+
+Context Members: ${members ? JSON.stringify(members.map(m => m.name)) : 'None'}
 
 Return a JSON array of actions found. If no actions, return empty array [].
 
@@ -179,7 +200,7 @@ Example:
 Returns:
 [
   {"type": "reminder", "title": "Call John", "dueTime": "tomorrow at 3pm", "priority": "high"},
-  {"type": "reminder", "title": "Send email to Sarah", "dueTime": "by Friday", "priority": "medium"}
+  {"type": "reminder", "title": "Send email", "assignedToName": "Sarah", "dueTime": "by Friday", "priority": "medium"}
 ]`;
 
       const response = await this.groqClient.chat.completions.create({
@@ -215,6 +236,7 @@ Returns:
           description: action.description || action.title || '',
           dueTime: action.dueTime ? ActionService['parseTimeString'](action.dueTime) : undefined,
           priority: action.priority || 'medium',
+          assignedToName: action.assignedToName,
           originalUserMessage: userMessage,
         }));
 

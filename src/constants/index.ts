@@ -97,6 +97,7 @@ export const TYPE_BADGES = {
   event: { label: 'Event', color: '#6366f1', icon: '📅' },
   reminder: { label: 'Reminder', color: '#f59e0b', icon: '⏰' },
   note: { label: 'Note', color: '#6b7280', icon: '📝' },
+  task: { label: 'Task', color: '#10b981', icon: '✅' },
 };
 
 export const EXAMPLE_PROMPTS = [
@@ -130,3 +131,5 @@ export const AI_MODELS = {
 
 export const MAX_RECORDING_DURATION = 600; // 10 minutes in seconds
 export const MIN_RECORDING_DURATION = 1; // 1 second
+
+export const WEBSITE_URL = 'https://www.memovox.in';

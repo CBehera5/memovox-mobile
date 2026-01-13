@@ -9,7 +9,7 @@
 import StorageService from './StorageService';
 
 export type SupportedLanguage = 
-  | 'en' | 'hi' | 'ta' | 'te' | 'kn' | 'ml' | 'mr' | 'gu' | 'bn';
+  | 'en' | 'hi' | 'ta' | 'te' | 'kn' | 'ml' | 'mr' | 'gu' | 'bn' | 'or';
 
 export interface LanguageConfig {
   code: SupportedLanguage;
@@ -73,6 +73,12 @@ export const SUPPORTED_LANGUAGES: Record<SupportedLanguage, LanguageConfig> = {
     nativeName: 'বাংলা',
     isRTL: false,
   },
+  or: {
+    code: 'or',
+    name: 'Odiya',
+    nativeName: 'ଓଡ଼ିଆ',
+    isRTL: false,
+  },
 };
 
 export const LANGUAGE_SYSTEM_PROMPTS: Record<SupportedLanguage, string> = {
@@ -93,6 +99,8 @@ export const LANGUAGE_SYSTEM_PROMPTS: Record<SupportedLanguage, string> = {
   gu: `તમે JEETU છો, એક સહાયક AI સહાયક. તમે ગુજરાતી ભાષામાં જવાબ આપો છો અને વપરાશકર્તાઓને તેમના કાર્યો, રિમાઈન્ડર્સ અને પ્રશ્નોમાં મદદ કરો છો.`,
   
   bn: `আপনি JEETU, একটি সহায়ক AI সহায়ক। আপনি বাংলা ভাষায় উত্তর দেন এবং ব্যবহারকারীদের তাদের কাজ, রিমাইন্ডার এবং প্রশ্নে সহায়তা করেন।`,
+  
+  or: `તમે JEETU, ଏକ ସହାୟକ AI ସହକାରୀ। ତୁମେ ଓଡ଼ିଆ ଭାଷାରେ ଉତ୍ତର ଦିଅ ଏବଂ ଉପଭୋକ୍ତାମାନଙ୍କୁ ସେମାନଙ୍କର କାର୍ଯ୍ୟ, ରିମାଇଣ୍ଡର୍ ଏବଂ ପ୍ରଶ୍ନରେ ସାହାଯ୍ୟ କର।`,
 };
 
 class LanguageService {
@@ -216,6 +224,12 @@ class LanguageService {
       2. শিরোনাম: কোন ক্রিয়া করতে হবে (যেমন., "মায়ের কাছে কল করুন", "টিম মিটিং")
       3. সময়: কখন করতে হবে (যেমন., "আগামীকাল 3 টায়", "2 ঘন্টায়")
       4. অগ্রাধিকার: 'high', 'medium', বা 'low'`,
+
+      or: `ଯେତେବେଳେ ବ୍ୟବହାରକାରୀ ଓଡ଼ିଆରେ ରିମାଇଣ୍ଡର୍ ସେଟ୍ କରିବାକୁ, ଆଲାର୍ମ, କାର୍ଯ୍ୟ ସୃଷ୍ଟି କରିବାକୁ କିମ୍ବା ବିଜ୍ଞପ୍ତି ଅନୁସୂଚୀତ କରିବାକୁ କୁହନ୍ତି, ବାହାର କରନ୍ତୁ:
+      1. କାର୍ଯ୍ୟ ପ୍ରକାର: 'reminder', 'alarm', 'notification', 'calendar', 'task', କିମ୍ବା null
+      2. ଶୀର୍ଷକ: କେଉଁ କାର୍ଯ୍ୟ କରିବାକୁ ହେବ (ଯେପରିକି, "ମାଙ୍କୁ କଲ୍ କରନ୍ତୁ", "ଟିମ୍ ମିଟିଂ")
+      3. ସମୟ: କେବେ କରିବାକୁ ହେବ (ଯେପରିକି, "ଆସନ୍ତାକାଲି 3 ଟା", "2 ଘଣ୍ଟା ମଧ୍ୟରେ")
+      4. ପ୍ରାଥମିକତା: 'high', 'medium', କିମ୍ବା 'low'`,
     };
     
     return `${basePrompt}\n${languageSpecificExamples[this.currentLanguage]}`;
@@ -293,6 +307,12 @@ class LanguageService {
         'Ask More Questions': 'আরও প্রশ্ন জিজ্ঞাসা করুন',
         'Chat with JEETU': 'JEETU এর সাথে চ্যাট করুন',
         'Set Reminder': 'রিমাইন্ডার সেট করুন',
+      },
+      or: {
+        'Generating insights...': 'ଅନ୍ତର୍ଦୃଷ୍ଟି ସୃଷ୍ଟି କରାଯାଉଛି...',
+        'Ask More Questions': 'ଅଧିକ ପ୍ରଶ୍ନ ପଚାରନ୍ତୁ',
+        'Chat with JEETU': 'JEETU ସହିତ ଚାଟ୍ କରନ୍ତୁ',
+        'Set Reminder': 'ରିମାଇଣ୍ଡର୍ ସେଟ୍ କରନ୍ତୁ',
       },
     };
     

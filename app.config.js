@@ -4,12 +4,11 @@ export default {
     expo: {
         name: "Memovox",
         slug: "memovox",
+        description: "Your AI-Powered Voice Companion. Visit us at www.memovox.in",
         version: "1.0.0",
         orientation: "portrait",
         icon: "./assets/icon.png",
         splash: {
-            image: "./assets/splash.png",
-            resizeMode: "contain",
             backgroundColor: "#ffffff"
         },
         ios: {
@@ -38,8 +37,6 @@ export default {
                 backgroundColor: "#ffffff"
             },
             package: "com.memovox.app",
-            enableProguard: false,
-            enableShrinkResources: false,
             softwareKeyboardLayoutMode: "pan",
             navigationBar: {
                 visible: "sticky-immersive",
@@ -74,7 +71,16 @@ export default {
                 }
             ],
             "expo-web-browser",
-            "expo-font"
+            "expo-font",
+            [
+                "expo-build-properties",
+                {
+                    "android": {
+                        "enableProguardInReleaseBuilds": true,
+                        "enableShrinkResourcesInReleaseBuilds": true
+                    }
+                }
+            ]
         ],
         extra: {
             eas: {

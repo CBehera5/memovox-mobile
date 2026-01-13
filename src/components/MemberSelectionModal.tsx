@@ -30,10 +30,31 @@ export default function MemberSelectionModal({
   onSelectMember,
   title = 'Add Member',
 }: MemberSelectionModalProps) {
+  // --- STATE ---
+  const [activeTab, setActiveTab] = useState<'search' | 'contacts'>('search');
+  
+  // Search State
   const [searchQuery, setSearchQuery] = useState('');
-  const [loading, setLoading] = useState(false);
   const [searchResults, setSearchResults] = useState<any[]>([]);
+  
+  // Contacts State
+  const [contacts, setContacts] = useState<any[]>([]);
+  const [permissionGranted, setPermissionGranted] = useState(false);
+  
+  // General State
+  const [loading, setLoading] = useState(false);
 
+  // --- CURRENT USER STATE ---
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const router = require('expo-router').useRouter();
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      setCurrentUser(data.user);
+    });
+  }, []);
+
+  // --- SEARCH LOGIC ---
   const searchUsers = async (query: string) => {
     if (!query.trim()) {
       setSearchResults([]);
@@ -60,36 +81,74 @@ export default function MemberSelectionModal({
 
   useEffect(() => {
     const delayDebounceFn = setTimeout(() => {
-      if (searchQuery) {
+      if (searchQuery && activeTab === 'search') {
         searchUsers(searchQuery);
       }
     }, 500);
 
     return () => clearTimeout(delayDebounceFn);
-  }, [searchQuery]);
+  }, [searchQuery, activeTab]);
 
+  // --- CONTACTS LOGIC ---
+  const fetchContacts = async () => {
+    // For testing/MVP, we skip the strict phone_confirmed_at check.
+    // Ideally we should check if they have a phone number in their profile.
+    
+    setLoading(true);
+    try {
+      // Lazy load ContactService
+      const ContactService = require('../services/ContactService').default;
+      const contactsData = await ContactService.getContacts();
+      
+      if (contactsData.length > 0) {
+        setPermissionGranted(true);
+        // Find matches
+        const matches = await ContactService.findMemoVoxUsers(contactsData);
+        setContacts(matches);
+      } else {
+        // Permission might be denied or no contacts
+        setContacts([]);
+      }
+    } catch (error) {
+      console.error('Error fetching contacts:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'contacts') {
+      fetchContacts();
+    }
+  }, [activeTab, currentUser]); // Added currentUser dependency
+
+  // --- HANDLERS ---
   const handleSelect = (user: any) => {
     onSelectMember(user.id, user.full_name || user.email);
     onClose();
   };
 
-  const handleInvite = async () => {
+  const handleSelectContact = (contact: any) => {
+    if (contact.isRegistered && contact.userId) {
+      onSelectMember(contact.userId, contact.name);
+      onClose();
+    } else {
+      // Invitation flow
+      handleInvite(contact.phoneNumber);
+    }
+  };
+
+  const handleInvite = async (phoneNumber?: string) => {
     try {
+      const message =
+        'Hey! Join me on MemoVox to collaborate on tasks and plans. Download here: https://memovox.app/download';
+      
       const result = await Share.share({
-        message:
-          'Hey! Join me on MemoVox to collaborate on tasks and plans. Download here: https://memovox.app/download',
+        message: message,
+        title: 'Join MemoVox',
       });
-      if (result.action === Share.sharedAction) {
-        if (result.activityType) {
-          // shared with activity type of result.activityType
-        } else {
-          // shared
-        }
-      } else if (result.action === Share.dismissedAction) {
-        // dismissed
-      }
     } catch (error: any) {
-      Alert.alert(error.message);
+      Alert.alert('Error', error.message);
     }
   };
 
@@ -109,60 +168,124 @@ export default function MemberSelectionModal({
             </TouchableOpacity>
           </View>
 
-          <View style={styles.searchContainer}>
-            <Search size={20} color={COLORS.gray[400]} style={styles.searchIcon} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search by name or email..."
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
+          {/* TABS */}
+          <View style={styles.tabContainer}>
+            <TouchableOpacity 
+              style={[styles.tab, activeTab === 'search' && styles.activeTab]}
+              onPress={() => setActiveTab('search')}
+            >
+              <Text style={[styles.tabText, activeTab === 'search' && styles.activeTabText]}>Search ID</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.tab, activeTab === 'contacts' && styles.activeTab]}
+              onPress={() => setActiveTab('contacts')}
+            >
+              <Text style={[styles.tabText, activeTab === 'contacts' && styles.activeTabText]}>Phone Contacts</Text>
+            </TouchableOpacity>
           </View>
 
-          {loading ? (
-            <ActivityIndicator size="small" color={COLORS.primary} style={styles.loader} />
-          ) : (
-            <FlatList
-              data={searchResults}
-              keyExtractor={(item) => item.id}
-              ListEmptyComponent={
-                searchQuery ? (
-                  <View style={styles.emptyContainer}>
-                    <Text style={styles.emptyText}>No users found</Text>
-                    <TouchableOpacity style={styles.inviteButton} onPress={handleInvite}>
-                      <Share2 size={16} color={COLORS.primary} style={{ marginRight: 8 }} />
-                      <Text style={styles.inviteButtonText}>Invite to MemoVox</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  <View style={styles.placeholderContainer}>
-                    <UserPlus size={48} color={COLORS.gray[300]} />
-                    <Text style={styles.placeholderText}>
-                      Search for people to add to this task
-                    </Text>
-                  </View>
-                )
-              }
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.userItem}
-                  onPress={() => handleSelect(item)}
-                >
-                  <View style={styles.avatar}>
-                    <Text style={styles.avatarText}>
-                      {(item.full_name || item.email || '?').charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                  <View style={styles.userInfo}>
-                    <Text style={styles.userName}>{item.full_name || 'Unknown'}</Text>
-                    <Text style={styles.userEmail}>{item.email}</Text>
-                  </View>
-                </TouchableOpacity>
+          {activeTab === 'search' ? (
+            <>
+              <View style={styles.searchContainer}>
+                <Search size={20} color={COLORS.gray[400]} style={styles.searchIcon} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search by exact name or email..."
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+
+              {loading ? (
+                <ActivityIndicator size="small" color={COLORS.primary} style={styles.loader} />
+              ) : (
+                <FlatList
+                  data={searchResults}
+                  keyExtractor={(item) => item.id}
+                  ListEmptyComponent={
+                    searchQuery ? (
+                      <View style={styles.emptyContainer}>
+                        <Text style={styles.emptyText}>No users found</Text>
+                      </View>
+                    ) : (
+                      <View style={styles.placeholderContainer}>
+                        <UserPlus size={48} color={COLORS.gray[300]} />
+                        <Text style={styles.placeholderText}>
+                          Search for people to add to this task
+                        </Text>
+                      </View>
+                    )
+                  }
+                  renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.userItem}
+                    onPress={() => handleSelect(item)}
+                  >
+                    <View style={styles.avatar}>
+                      <Text style={styles.avatarText}>
+                        {(item.full_name || item.email || '?').charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={styles.userInfo}>
+                      <Text style={styles.userName}>{item.full_name || 'Unknown'}</Text>
+                      <Text style={styles.userEmail}>{item.email}</Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
+                contentContainerStyle={styles.listContent}
+              />
               )}
-              contentContainerStyle={styles.listContent}
-            />
+            </>
+          ) : (
+            // CONTACTS TAB LIST
+            <>
+              {loading ? (
+                <ActivityIndicator size="small" color={COLORS.primary} style={styles.loader} />
+              ) : (
+                <FlatList
+                  data={contacts}
+                  keyExtractor={(item, index) => item.contactId || index.toString()}
+                  ListEmptyComponent={
+                    <View style={styles.placeholderContainer}>
+                       <Text style={styles.placeholderText}>
+                         {permissionGranted ? 'No contacts found with phone numbers.' : 'Grant permission to find friends.'}
+                       </Text>
+                       {!permissionGranted && (
+                         <TouchableOpacity onPress={fetchContacts} style={[styles.inviteButton, { marginTop: 16 }]}>
+                            <Text style={styles.inviteButtonText}>Sync Contacts</Text>
+                         </TouchableOpacity>
+                       )}
+                    </View>
+                  }
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={styles.userItem}
+                      onPress={() => handleSelectContact(item)}
+                    >
+                      <View style={[styles.avatar, !item.isRegistered && { backgroundColor: COLORS.gray[200] }]}>
+                        <Text style={[styles.avatarText, !item.isRegistered && { color: COLORS.gray[500] }]}>
+                          {item.name?.charAt(0) || '?'}
+                        </Text>
+                      </View>
+                      <View style={styles.userInfo}>
+                        <Text style={styles.userName}>{item.name}</Text>
+                        <Text style={styles.userEmail}>{item.phoneNumber}</Text>
+                      </View>
+                      <View style={styles.actionButton}>
+                        {item.isRegistered ? (
+                           <Text style={{ color: COLORS.primary, fontWeight: 'bold' }}>ADD</Text>
+                        ) : (
+                           <Text style={{ color: COLORS.gray[500], fontSize: 12 }}>INVITE</Text>
+                        )}
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                  contentContainerStyle={styles.listContent}
+                />
+              )}
+            </>
           )}
         </View>
       </Pressable>
@@ -293,5 +416,33 @@ const styles = StyleSheet.create({
   userEmail: {
     fontSize: 12,
     color: COLORS.gray[500],
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    marginBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.gray[200],
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  activeTab: {
+    borderBottomWidth: 2,
+    borderBottomColor: COLORS.primary,
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: COLORS.gray[500],
+  },
+  activeTabText: {
+    color: COLORS.primary,
+    fontWeight: '600',
+  },
+  actionButton: {
+    paddingHorizontal: 12,
+    justifyContent: 'center',
   },
 });

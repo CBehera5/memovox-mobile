@@ -19,6 +19,10 @@ interface TranscriptionResult {
   metadata?: any;
 }
 
+export interface AnalysisContext {
+  members?: { id: string; name: string }[];
+}
+
 class AIService {
   private config: AIServiceConfig = {
     provider: 'groq',
@@ -67,7 +71,7 @@ class AIService {
     this.initializeClient();
   }
 
-  async transcribeAndAnalyze(audioUri: string): Promise<TranscriptionResult> {
+  async transcribeAndAnalyze(audioUri: string, context?: AnalysisContext): Promise<TranscriptionResult> {
     try {
       logger.info('Starting transcription and analysis', { audioUri });
       
@@ -79,7 +83,7 @@ class AIService {
       }
       
       // Analyze with Groq
-      const analysis = await this.analyzeMemo(transcription);
+      const analysis = await this.analyzeMemo(transcription, context);
       logger.info('Analysis completed successfully');
       
       // 5. If actionable, schedule a smart reminder
@@ -189,12 +193,12 @@ class AIService {
     }
   }
 
-  async analyzeMemo(transcription: string): Promise<TranscriptionResult> {
+  async analyzeMemo(transcription: string, context?: AnalysisContext): Promise<TranscriptionResult> {
     logger.info('Analyzing transcription', { provider: this.config.provider });
     
     if (this.groqClient && this.config.provider === 'groq') {
       try {
-        return await this.callGroqAPI(transcription);
+        return await this.callGroqAPI(transcription, context);
       } catch (error) {
         logger.error('Groq API error, falling back to mock:', error);
         return this.mockTranscribeAndAnalyze();
@@ -205,9 +209,9 @@ class AIService {
     return this.mockTranscribeAndAnalyze();
   }
 
-  private async callGroqAPI(transcription: string): Promise<TranscriptionResult> {
+  private async callGroqAPI(transcription: string, context?: AnalysisContext): Promise<TranscriptionResult> {
     try {
-      const prompt = this.buildAnalysisPrompt(transcription);
+      const prompt = this.buildAnalysisPrompt(transcription, context);
       
       logger.debug('Calling Groq API for analysis', { model: 'llama-3.3-70b-versatile' });
       
@@ -255,6 +259,20 @@ class AIService {
               actionItems: [],
               suggestedFollowUps: [],
               tone: parsed.analysis?.tone,
+              assignments: (parsed.analysis?.assignments || []).map((assignment: any) => {
+                // Try to match name to ID if context is provided
+                if (context?.members && assignment.assignedToName) {
+                   const match = context.members.find(m => 
+                     m.name.toLowerCase() === assignment.assignedToName.toLowerCase() || 
+                     m.name.toLowerCase().includes(assignment.assignedToName.toLowerCase()) ||
+                     assignment.assignedToName.toLowerCase().includes(m.name.toLowerCase())
+                   );
+                   if (match) {
+                     return { ...assignment, assignedToId: match.id };
+                   }
+                }
+                return assignment;
+              }),
             },
             metadata: parsed.metadata || {},
           };
@@ -272,8 +290,15 @@ class AIService {
     }
   }
 
-  private buildAnalysisPrompt(transcription: string): string {
-    return `Extract information from this voice memo transcription.
+  private buildAnalysisPrompt(transcription: string, context?: AnalysisContext): string {
+    let contextStr = '';
+    if (context?.members && context.members.length > 0) {
+      contextStr = `\nContext Members (for task assignment): ${JSON.stringify(context.members.map(m => ({ name: m.name, id: m.id })))}`;
+    }
+
+    return `Extract information from this voice memo transcription.${contextStr}
+    
+DO NOT invent, infer, or guess details not explicitly mentioned.
 DO NOT invent, infer, or guess details not explicitly mentioned.
 DO NOT add people, team names, dates, times, or other details the user did not mention.
 Extract ONLY what is directly said.
@@ -288,6 +313,14 @@ Return ONLY valid JSON matching this exact structure:
     "keywords": ["only words explicitly mentioned in transcription"],
     "summary": "1-2 sentence direct quote or paraphrase of what was said - NO invented details",
     "actionItems": ["only actions the user explicitly stated or clearly implied"],
+    "actionItems": ["only actions the user explicitly stated or clearly implied"],
+    "assignments": [
+      {
+        "task": "Specific task description",
+        "assignedToName": "Name of the person assigned (must match a name in Context Members if provided)",
+        "priority": "low|medium|high"
+      }
+    ],
     "suggestedFollowUps": [],
     "tone": "casual|formal|urgent|enthusiastic|serious|humorous"
   },

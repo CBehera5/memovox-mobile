@@ -10,11 +10,12 @@ import {
   Alert,
   Switch,
   ActivityIndicator,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { COLORS, GRADIENTS } from '../../src/constants';
+import { COLORS, GRADIENTS, WEBSITE_URL } from '../../src/constants';
 import StorageService from '../../src/services/StorageService';
 import AuthService from '../../src/services/AuthService';
 import VoiceMemoService from '../../src/services/VoiceMemoService';
@@ -471,6 +472,22 @@ export default function PrivacyAndData() {
                 <Text style={styles.actionTitle}>Cookie Policy</Text>
                 <Text style={styles.actionDescription}>
                   How we use cookies (mobile app)
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.actionArrow}>→</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.actionButton}
+            onPress={() => Linking.openURL(WEBSITE_URL)}
+          >
+            <View style={styles.actionButtonContent}>
+              <Text style={styles.actionIcon}>🌐</Text>
+              <View style={styles.actionText}>
+                <Text style={styles.actionTitle}>Visit Website</Text>
+                <Text style={styles.actionDescription}>
+                  {WEBSITE_URL.replace('https://', '')}
                 </Text>
               </View>
             </View>

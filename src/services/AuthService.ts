@@ -61,6 +61,8 @@ class AuthService {
         email: data.user.email || '',
         name: credentials.name,
         createdAt: data.user.created_at || new Date().toISOString(),
+        phoneNumber: data.user.phone,
+        phoneVerified: !!data.user.phone_confirmed_at,
       };
 
       // Save to local storage for offline access
@@ -109,6 +111,8 @@ class AuthService {
         email: data.user.email || '',
         name: data.user.user_metadata?.full_name || 'User',
         createdAt: data.user.created_at || new Date().toISOString(),
+        phoneNumber: data.user.phone,
+        phoneVerified: !!data.user.phone_confirmed_at,
       };
 
       // Save to local storage for offline access
@@ -207,6 +211,8 @@ class AuthService {
         email: data.user.email || '',
         name: data.user.user_metadata?.full_name || 'User',
         createdAt: data.user.created_at || new Date().toISOString(),
+        phoneNumber: data.user.phone,
+        phoneVerified: !!data.user.phone_confirmed_at,
       };
       
       // Update local storage
@@ -354,7 +360,7 @@ class AuthService {
         provider: 'google',
         options: {
           redirectTo: redirectUri,
-          skipBrowserRedirect: true, // we handle it manually
+          skipBrowserRedirect: true,
           scopes: 'openid profile email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events',
           queryParams: {
             access_type: 'offline',
@@ -406,19 +412,46 @@ class AuthService {
    */
   async handleOAuthCallback(url: string): Promise<{ user: User; token: string; isAuthenticated: boolean }> {
     try {
-      console.log('🔵 Handling OAuth callback');
+      console.log('🔵 Handling OAuth callback with URL:', url);
       
-      // Exchange the code for a session
-      const { data, error } = await supabase.auth.exchangeCodeForSession(url);
-      
-      if (error) {
-        console.error('OAuth callback error:', error);
-        throw new Error(error.message || 'OAuth callback failed');
-      }
+      // Helper to extract params
+      const getParam = (name: string) => {
+        const regex = new RegExp(`[?&#]${name}=([^&#]*)`);
+        const results = regex.exec(url);
+        return results ? decodeURIComponent(results[1].replace(/\+/g, ' ')) : null;
+      };
 
-      if (!data.session || !data.user) {
-        throw new Error('No session data from OAuth');
+      const code = getParam('code');
+      const accessToken = getParam('access_token');
+      const refreshToken = getParam('refresh_token');
+
+      let sessionData = null;
+      let userData = null;
+
+      if (code) {
+         console.log('🔹 Found Auth Code, exchanging for session...');
+         const { data, error } = await supabase.auth.exchangeCodeForSession(url);
+         if (error) throw error;
+         sessionData = data.session;
+         userData = data.user;
+      } else if (accessToken) {
+         console.log('🔹 Found Access Token (Implicit), setting session...');
+         const { data, error } = await supabase.auth.setSession({
+           access_token: accessToken,
+           refresh_token: refreshToken || '',
+         });
+         if (error) throw error;
+         sessionData = data.session;
+         userData = data.user;
+      } else {
+        throw new Error('No code or access token found in URL');
       }
+      
+      if (!sessionData || !userData) {
+        throw new Error('No session data established');
+      }
+      
+      const data = { session: sessionData, user: userData };
 
       // Create or update profile
       const { error: profileError } = await supabase
@@ -442,6 +475,8 @@ class AuthService {
         email: data.user.email || '',
         name: data.user.user_metadata?.full_name || data.user.user_metadata?.name || 'User',
         createdAt: data.user.created_at || new Date().toISOString(),
+        phoneNumber: data.user.phone,
+        phoneVerified: !!data.user.phone_confirmed_at,
       };
 
       // Save to local storage
@@ -454,7 +489,6 @@ class AuthService {
         await StorageService.setItem('google_provider_token', data.session.provider_token);
       } else {
         console.warn('⚠️ No provider token found in OAuth callback session');
-        console.log('Session Keys:', Object.keys(data.session));
       }
 
       console.log('✅ OAuth callback successful:', user.email);

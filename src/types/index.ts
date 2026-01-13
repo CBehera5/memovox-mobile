@@ -5,6 +5,8 @@ export interface User {
   email: string;
   name: string;
   createdAt: string;
+  phoneNumber?: string;
+  phoneVerified?: boolean;
 }
 
 export interface VoiceMemo {
@@ -38,13 +40,19 @@ export type MemoCategory =
   | 'Hobbies'
   | 'Notes';
 
-export type MemoType = 'event' | 'reminder' | 'note';
+export type MemoType = 'event' | 'reminder' | 'note' | 'task';
 
 export interface AIAnalysis {
   sentiment?: 'positive' | 'neutral' | 'negative';
   keywords: string[];
   summary: string;
   actionItems?: string[];
+  assignments?: {
+    task: string;
+    assignedToName: string;
+    assignedToId?: string; // Populated if matched
+    priority?: 'low' | 'medium' | 'high';
+  }[];
   relatedMemos?: string[];
   suggestedFollowUps?: string[];
   tone?: string;

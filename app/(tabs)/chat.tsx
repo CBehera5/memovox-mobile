@@ -525,6 +525,8 @@ const ChatScreen: React.FC = () => {
       const createdActions = await AgentActionManager.processMessageForActions(userMessage, {
         memoId: params.memoId,
         userId: user.id,
+        // Pass group members if in collaborative mode
+        members: isGroupPlanMode ? groupPlanMembers.map(m => ({ id: m.id, name: m.name })) : undefined
       });
 
       if (createdActions.length > 0) {
@@ -536,7 +538,8 @@ const ChatScreen: React.FC = () => {
                        action.type === 'reminder' ? '🔔' : 
                        action.type === 'calendar' ? '📅' : 
                        action.type === 'task' ? '✓' : '📝';
-          return `${emoji} ${action.title}`;
+          const assignment = action.assignedToName ? ` (to ${action.assignedToName})` : '';
+          return `${emoji} ${action.title}${assignment}`;
         }).join('\n');
         
         Alert.alert(

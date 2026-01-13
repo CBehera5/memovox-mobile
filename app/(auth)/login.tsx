@@ -44,8 +44,8 @@ export default function Login() {
     try {
       const result = await AuthService.login({ email, password });
       if (result.isAuthenticated) {
-        // Navigation handled by index.tsx auth check
-        router.replace('/');
+        // Direct navigation to home
+        router.replace('/(tabs)/home');
       } else {
         Alert.alert('Login Failed', 'Unable to sign in. Please check your credentials.');
       }

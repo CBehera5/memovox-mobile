@@ -21,6 +21,7 @@ import { User, UserPersona, AIServiceConfig } from '../../src/types';
 import { COLORS, GRADIENTS, CATEGORY_COLORS } from '../../src/constants';
 import { getInitials } from '../../src/utils';
 import GoogleCalendarSync from '../../src/components/GoogleCalendarSync';
+import { supabase } from '../../src/config/supabase';
 
 export default function Profile() {
   const router = useRouter();
@@ -276,6 +277,71 @@ export default function Profile() {
 
           {/* Google Calendar Sync */}
           <GoogleCalendarSync />
+
+          {/* Phone Number Setting */}
+          <View style={styles.settingCard}>
+            <View style={styles.settingRow}>
+              <View style={styles.settingInfo}>
+                <Text style={styles.settingLabel}>Phone Number {user?.phoneVerified && '✅'}</Text>
+                <Text style={styles.settingDescription}>
+                  {user?.phoneNumber 
+                    ? `${user.phoneNumber} ${user.phoneVerified ? '(Verified)' : '(Unverified)'}`
+                    : 'Link your phone to find friends'
+                  }
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  if (!user?.id) return;
+                  
+                  Alert.prompt(
+                    'Link Phone Number',
+                    'Enter your phone number (e.g. +1234567890) to allow friends to find you.',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Save',
+                        onPress: async (phone?: string) => {
+                          if (phone) {
+                            try {
+                              const cleaned = phone.replace(/\s/g, '');
+                              // Direct update for testing (No OTP)
+                              const { error } = await supabase
+                                .from('profiles')
+                                .update({ 
+                                  phone_number: cleaned,
+                                  // For testing, we can mark as verified or leave it, 
+                                  // but our checks might need to be looser.
+                                  // user.phoneVerified is derived from phone_confirmed_at usually.
+                                  // Let's just save the number.
+                                })
+                                .eq('id', user.id);
+                              
+                              if (error) throw error;
+
+                              Alert.alert('Success', 'Phone number saved! Friends can now find you.');
+                              
+                              // Refresh user data from Supabase
+                              await AuthService.getCurrentUser();
+                              loadData(); 
+                            } catch (e: any) {
+                              Alert.alert('Error', e.message || 'Failed to save phone number');
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    'plain-text',
+                    user?.phoneNumber || ''
+                  );
+                }}
+              >
+                <Text style={{ color: COLORS.primary, fontWeight: '600' }}>
+                  {user?.phoneNumber ? 'Change' : 'Link'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
 
 
 

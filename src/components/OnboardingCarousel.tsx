@@ -1,6 +1,6 @@
 // src/components/OnboardingCarousel.tsx
 
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import {
   View,
   ScrollView,
@@ -9,6 +9,7 @@ import {
   TouchableOpacity,
   Text,
   Platform,
+  Animated,
 } from 'react-native';
 import { OnboardingCard, OnboardingCardData } from './OnboardingCard';
 import { COLORS } from '../constants';
@@ -68,6 +69,31 @@ export const OnboardingCarousel: React.FC<OnboardingCarouselProps> = ({
 }) => {
   const scrollViewRef = useRef<ScrollView>(null);
   const [currentPage, setCurrentPage] = useState(0);
+  
+  // Animation for background color
+  const colorAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(colorAnim, {
+          toValue: 1,
+          duration: 3000,
+          useNativeDriver: false, // Color interpolation requires false
+        }),
+        Animated.timing(colorAnim, {
+          toValue: 0,
+          duration: 3000,
+          useNativeDriver: false,
+        }),
+      ])
+    ).start();
+  }, []);
+
+  const backgroundColor = colorAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [COLORS.primary, COLORS.accent || '#ec4899'], // Indigo to Pink
+  });
 
   const handleScroll = (event: any) => {
     const contentOffsetX = event.nativeEvent.contentOffset.x;
@@ -88,16 +114,16 @@ export const OnboardingCarousel: React.FC<OnboardingCarouselProps> = ({
     }
   };
 
-  const handleSkip = () => {
+  const handeSkipAction = () => {
     onSkip();
   };
 
   return (
-    <View style={styles.container}>
+    <Animated.View style={[styles.container, { backgroundColor }]}>
       {/* Skip Button */}
       <TouchableOpacity
         style={styles.skipButton}
-        onPress={handleSkip}
+        onPress={handeSkipAction}
         activeOpacity={0.7}
       >
         <Text style={styles.skipText}>Skip</Text>
@@ -146,7 +172,7 @@ export const OnboardingCarousel: React.FC<OnboardingCarouselProps> = ({
           </Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </Animated.View>
   );
 };
 

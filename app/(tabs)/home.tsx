@@ -13,6 +13,7 @@ import {
   Alert,
   Animated,
   Dimensions,
+  TextInput,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Clipboard from 'expo-clipboard';
@@ -44,7 +45,7 @@ import { cleanImportedText, parseWhatsAppExport } from '../../src/utils/parsers'
 import { formatMemoForExport } from '../../src/utils/exportUtils';
 import { Share as RNShare } from 'react-native'; // Resize alias if needed or just use Share
 
-import { Bell, MessageSquare, Settings, Mic, Layout, CheckCircle, Calendar, Lightbulb, Bookmark, Trash2, Share2, FileText } from 'lucide-react-native';
+import { Bell, MessageSquare, Settings, Mic, Layout, CheckCircle, Calendar, Lightbulb, Bookmark, Trash2, Share2, FileText, Search, X } from 'lucide-react-native';
 
 const { width } = Dimensions.get('window');
 
@@ -64,11 +65,37 @@ export default function Home() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [memberModalVisible, setMemberModalVisible] = useState(false);
   const [selectedTaskIdForSharing, setSelectedTaskIdForSharing] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Audio playback state
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [playingMemoId, setPlayingMemoId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+
+  // Animation for background color
+  const colorAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(colorAnim, {
+          toValue: 1,
+          duration: 3000,
+          useNativeDriver: false, // Color interpolation requires false
+        }),
+        Animated.timing(colorAnim, {
+          toValue: 0,
+          duration: 3000,
+          useNativeDriver: false,
+        }),
+      ])
+    ).start();
+  }, []);
+
+  const backgroundColor = colorAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [COLORS.primary, COLORS.accent || '#ec4899'], // Indigo to Pink
+  });
 
   useEffect(() => {
     loadData();
@@ -607,7 +634,7 @@ export default function Home() {
         <TrialBanner />
 
         {/* Header with Icons */}
-        <LinearGradient colors={GRADIENTS.primary as any} style={styles.header}>
+        <Animated.View style={[styles.header, { backgroundColor }]}>
           <View style={styles.headerContent}>
             <View style={styles.headerLeft}>
               <Text style={styles.greeting}>Hello, {user?.name?.split(' ')[0] || 'there'}! 👋</Text>
@@ -755,12 +782,32 @@ export default function Home() {
               </TouchableOpacity>
             </View>
           </View>
-        </LinearGradient>
+        </Animated.View>
 
 
 
-        {/* Empty State for New Users */}
-        {memos.length === 0 && (
+        {/* Search Bar */}
+        <View style={styles.section}>
+          <View style={styles.searchContainer}>
+            <Search size={20} color={COLORS.gray[400]} style={styles.searchIcon} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search your tasks..."
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholderTextColor={COLORS.gray[400]}
+              returnKeyType="search"
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearButton}>
+                <X size={16} color={COLORS.gray[400]} />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
+        {/* Empty State for New Users (only if search is empty) */}
+        {memos.length === 0 && searchQuery === '' && (
           <View style={styles.emptyState}>
             <Text style={styles.emptyStateEmoji}>🎙️</Text>
             <Text style={styles.emptyStateTitle}>Welcome to MemoVox!</Text>
@@ -792,8 +839,81 @@ export default function Home() {
           </View>
         )}
 
-        {/* Show content only if user has memos */}
-        {memos.length > 0 && (
+        {/* Search Results Mode */}
+        {searchQuery.length > 0 ? (
+          <View style={styles.section}>
+             <View style={styles.searchResultsHeader}>
+               <Text style={styles.searchResultsTitle}>
+                  Found {allActions.filter(a => a.title.toLowerCase().includes(searchQuery.toLowerCase()) || (a.description && a.description.toLowerCase().includes(searchQuery.toLowerCase()))).length} result(s)
+               </Text>
+             </View>
+             
+             <View style={styles.actionItemsContainer}>
+                {allActions
+                  .filter(a => a.title.toLowerCase().includes(searchQuery.toLowerCase()) || (a.description && a.description.toLowerCase().includes(searchQuery.toLowerCase())))
+                  .map((action) => (
+                      <View key={action.id} style={styles.memoTaskCard}>
+                        {/* Task Header with Menu */}
+                        <View style={styles.memoTaskHeader}>
+                          <View style={styles.memoTaskBadges}>
+                            <View
+                              style={[
+                                styles.typeBadge,
+                                action.type === 'reminder' && { backgroundColor: '#FF9500' },
+                                action.type === 'calendar_event' && { backgroundColor: '#5AC8FA' },
+                                action.type === 'task' && { backgroundColor: '#007AFF' },
+                              ]}
+                            >
+                              <Text style={styles.typeBadgeText}>
+                                {action.type === 'reminder' && '⏰'}
+                                {action.type === 'calendar_event' && '📅'}
+                                {action.type === 'task' && '✅'}
+                              </Text>
+                            </View>
+                            <View
+                              style={[
+                                styles.priorityBadge,
+                                action.priority === 'high' && styles.memoPriorityHighBadge,
+                                action.priority === 'medium' && styles.memoPriorityMediumBadge,
+                                action.priority === 'low' && styles.memoPriorityLowBadge,
+                              ]}
+                            >
+                              <Text style={styles.priorityBadgeText}>
+                                {action.priority.toUpperCase()}
+                              </Text>
+                            </View>
+                          </View>
+                          <TaskMenu
+                              menuItems={[
+                                {
+                                  icon: '👥',
+                                  label: 'Add Member',
+                                  onPress: () => handleShareTask(action.id),
+                                  backgroundColor: '#E3F2FD'
+                                },
+                                // ... Reuse other menu items or keep simple
+                              ]}
+                            />
+                        </View>
+
+                        <Text style={styles.memoTaskTitle} numberOfLines={2}>
+                          {action.title}
+                        </Text>
+                        {action.description && (
+                          <Text style={styles.memoTaskTranscription} numberOfLines={2}>
+                            {action.description}
+                          </Text>
+                        )}
+                        <Text style={styles.memoTaskTime}>
+                              {action.dueDate ? formatRelativeTime(action.dueDate) : formatRelativeTime(action.createdAt)}
+                        </Text>
+                      </View>
+                  ))}
+             </View>
+          </View>
+        ) : (
+        /* Show regular content only if user has memos and NOT searching */
+        memos.length > 0 && (
           <>
         {/* Carousel: Progress & Today's Tasks & This Week */}
         <View style={styles.section}>
@@ -1144,7 +1264,8 @@ export default function Home() {
           </TouchableOpacity>
         </View>
         </>
-        )}
+        )
+      )}
       </ScrollView>
       <MemberSelectionModal
         visible={memberModalVisible}
@@ -1411,6 +1532,11 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     fontWeight: '500',
   },
+  quickActionText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: COLORS.white,
+  },
   quickAction: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1422,10 +1548,42 @@ const styles = StyleSheet.create({
   quickActionIcon: {
     fontSize: 24,
   },
-  quickActionText: {
-    fontSize: 18,
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.white,
+    marginHorizontal: 16,
+    marginTop: -20, // Overlap nicely with header
+    marginBottom: 16,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 48,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  searchIcon: {
+    marginRight: 10,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 16,
+    color: COLORS.dark,
+    height: '100%',
+  },
+  clearButton: {
+    padding: 4,
+  },
+  searchResultsHeader: {
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  searchResultsTitle: {
+    fontSize: 16,
     fontWeight: '600',
-    color: COLORS.white,
+    color: COLORS.gray[800],
   },
   completionCard: {
     backgroundColor: COLORS.white,
