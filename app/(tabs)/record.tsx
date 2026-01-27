@@ -13,6 +13,7 @@ import {
   TouchableOpacity,
   FlatList,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
@@ -43,10 +44,13 @@ import PromptExamples from '../../src/components/PromptExamples';
 import { useAudioRecorder } from '../../src/hooks/useAudioRecorder';
 
 export default function Record() {
+  const router = useRouter();
   const { isRecording, duration, startRecording, stopRecording } = useAudioRecorder();
   
   const [isProcessing, setIsProcessing] = useState(false);
   const [result, setResult] = useState<any>(null); // TODO: Type this properly with AnalysisResult
+  const [lastMemoId, setLastMemoId] = useState<string | null>(null); // For AI Insight navigation
+  const [lastTranscription, setLastTranscription] = useState<string>(''); // For AI Insight context
   const [usageStats, setUsageStats] = useState<any>(null);
   
   // Language State
@@ -190,6 +194,8 @@ export default function Record() {
                       status: 'pending',
                       createdAt: new Date().toISOString(),
                       linkedMemoId: memoId,
+                      transcription: analysis.transcription, // Store original transcription
+                      category: memo.category,
                   } as any, user.id);
               } catch (e) {
                   logger.error('Failed to create action', e);
@@ -221,6 +227,8 @@ export default function Record() {
       loadUsageStats();
 
       setResult(analysis);
+      setLastMemoId(memoId);
+      setLastTranscription(analysis.transcription);
       safeHaptics('success');
       Alert.alert('Success', `Memo "${analysis.title}" saved!`);
 
@@ -410,10 +418,38 @@ export default function Record() {
           )}
 
           {result && !isProcessing && (
-            <AnalysisResultCard 
-                result={result} 
-                onRecordNew={() => setResult(null)} 
-            />
+            <>
+              <AnalysisResultCard 
+                  result={result} 
+                  onRecordNew={() => { setResult(null); setLastMemoId(null); setLastTranscription(''); }} 
+              />
+              
+              {/* Get AI Insight Button */}
+              <TouchableOpacity
+                style={styles.aiInsightButton}
+                onPress={() => {
+                  router.push({
+                    pathname: '/(tabs)/chat',
+                    params: {
+                      mode: 'memo-insight',
+                      memoId: lastMemoId || '',
+                      transcription: lastTranscription,
+                      analysisTitle: result?.title || '',
+                    },
+                  });
+                }}
+              >
+                <LinearGradient
+                  colors={['#8B5CF6', '#6366F1']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.aiInsightGradient}
+                >
+                  <Text style={styles.aiInsightButtonText}>✨ Get AI Insight</Text>
+                  <Text style={styles.aiInsightSubtext}>Ask Jeetu for more details</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </>
           )}
 
           {!isRecording && !isProcessing && !result && (
@@ -574,5 +610,26 @@ const styles = StyleSheet.create({
   langOptionEnglish: {
     fontSize: 14,
     color: COLORS.gray[500],
+  },
+  aiInsightButton: {
+    marginTop: 16,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  aiInsightGradient: {
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    borderRadius: 16,
+  },
+  aiInsightButtonText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  aiInsightSubtext: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 13,
+    marginTop: 4,
   },
 });

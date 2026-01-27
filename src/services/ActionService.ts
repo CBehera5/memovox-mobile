@@ -17,6 +17,8 @@ export interface ActionRequest {
   createdFrom?: string;
   assignedToName?: string;
   assignedToId?: string;
+  sessionId?: string; // Chat session that created this task
+  category?: string; // Task category (Health, Work, etc.)
 }
 
 export interface ActionResult {
@@ -116,7 +118,24 @@ class ActionService {
         const parsed = JSON.parse(content);
         
         // Convert dueTime string to Date object
-        const dueDate = this.parseTimeString(parsed.dueTime);
+        let dueDate = this.parseTimeString(parsed.dueTime);
+
+        // INTELLIGENT MOCK TIME (If missing)
+        // User Request: "use your intelligence to add a mock time... and remind"
+        if (!dueDate) {
+            const now = new Date();
+            // If it's before 5 PM, schedule for today evening (6 PM)
+            if (now.getHours() < 17) {
+                dueDate = new Date(now);
+                dueDate.setHours(18, 0, 0, 0);
+            } else {
+                // Otherwise schedule for tomorrow morning (9 AM)
+                dueDate = new Date(now);
+                dueDate.setDate(dueDate.getDate() + 1);
+                dueDate.setHours(9, 0, 0, 0);
+            }
+            console.log('🤖 AI assigned Mock Time:', dueDate.toLocaleString());
+        }
 
         return {
           type: parsed.type || null,
@@ -400,7 +419,12 @@ class ActionService {
         createdFrom: actionRequest.createdFrom || 'chat',
         completed: false,
         createdAt: new Date().toISOString(),
-        // Add other required fields if AgentAction demands them
+        // Persist assignment details
+        assignedToId: actionRequest.assignedToId,
+        assignedToName: actionRequest.assignedToName,
+        // Chat session that created this task
+        sessionId: actionRequest.sessionId,
+        category: actionRequest.category,
       };
 
       // Save to storage
@@ -408,6 +432,17 @@ class ActionService {
       const tasks = await StorageService.getTasks();
       tasks.push(task as any);
       await StorageService.saveTasks(tasks);
+
+      // PROACTIVE REMINDER using the Mock Time / Set Time
+      if (actionRequest.dueTime || task.dueDate) {
+          const triggerTime = actionRequest.dueTime || new Date(task.dueDate);
+          await this.scheduleNotification({
+              title: `Task Reminder: ${task.title}`,
+              body: `Time to focus on: ${task.description || task.title}`,
+              triggerTime: triggerTime,
+              notificationId: `${taskId}_reminder`,
+          });
+      }
 
       console.log('Task created:', task);
       return {

@@ -1,4 +1,3 @@
-// app/(tabs)/profile.tsx
 
 import { useState, useEffect } from 'react';
 import {
@@ -10,20 +9,25 @@ import {
   Alert,
   Switch,
   Share,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import StorageService from '../../src/services/StorageService';
-import AuthService from '../../src/services/AuthService';
-import AIService from '../../src/services/AIService';
-import { User, UserPersona, AIServiceConfig } from '../../src/types';
-import { COLORS, GRADIENTS, CATEGORY_COLORS } from '../../src/constants';
-import { getInitials } from '../../src/utils';
-import GoogleCalendarSync from '../../src/components/GoogleCalendarSync';
-import { supabase } from '../../src/config/supabase';
+import { Ionicons } from '@expo/vector-icons';
+import StorageService from '../src/services/StorageService';
+import AuthService from '../src/services/AuthService';
+import AIService from '../src/services/AIService';
+import { User, UserPersona, AIServiceConfig } from '../src/types';
+import { COLORS, GRADIENTS, CATEGORY_COLORS } from '../src/constants';
+import { getInitials } from '../src/utils';
+import GoogleCalendarSync from '../src/components/GoogleCalendarSync';
+import { supabase } from '../src/config/supabase';
 
-export default function Profile() {
+export default function SettingsScreen() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [persona, setPersona] = useState<UserPersona | null>(null);
@@ -33,6 +37,55 @@ export default function Profile() {
     totalDuration: 0,
     avgPerDay: 0,
   });
+
+  // Modal State
+  const [phoneModalVisible, setPhoneModalVisible] = useState(false);
+  const [phoneNumberInput, setPhoneNumberInput] = useState('');
+
+  // Pre-fill phone number when modal opens
+  useEffect(() => {
+    if (user?.phoneNumber) {
+      setPhoneNumberInput(user.phoneNumber);
+    }
+  }, [user?.phoneNumber, phoneModalVisible]);
+
+  const handleSavePhone = async () => {
+    if (!phoneNumberInput.trim()) {
+      Alert.alert('Error', 'Please enter a valid phone number');
+      return;
+    }
+    
+    try {
+      let rawInput = phoneNumberInput.trim().replace(/\D/g, '');
+      // If user entered 10 digits (e.g. 9876543210), prepend 91
+      // If user entered 12 digits starting with 91, keep it.
+      
+      let finalNumber = '';
+      if (rawInput.length === 10) {
+          finalNumber = '+91' + rawInput;
+      } else if (rawInput.length > 10 && rawInput.startsWith('91')) {
+          finalNumber = '+' + rawInput; 
+      } else {
+          // Fallback or other country codes manually typed? 
+          // For now, assume +91 default behavior as requested.
+          finalNumber = '+' + rawInput;
+      }
+
+      const { error } = await supabase
+        .from('profiles')
+        .update({ phone_number: finalNumber })
+        .eq('id', user?.id);
+
+      if (error) throw error;
+
+      Alert.alert('Success', 'Phone number saved!');
+      setPhoneModalVisible(false);
+      await AuthService.getCurrentUser();
+      loadData();
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to update phone number');
+    }
+  };
 
   useEffect(() => {
     loadData();
@@ -151,6 +204,13 @@ export default function Profile() {
       <ScrollView>
         {/* Header */}
         <LinearGradient colors={GRADIENTS.primary} style={styles.header}>
+          <TouchableOpacity 
+             style={styles.backButton} 
+             onPress={() => router.back()}
+          >
+             <Ionicons name="arrow-back" size={24} color={COLORS.white} />
+          </TouchableOpacity>
+
           <View style={styles.avatarContainer}>
             <View style={styles.avatar}>
               <Text style={styles.avatarText}>
@@ -282,58 +342,23 @@ export default function Profile() {
           <View style={styles.settingCard}>
             <View style={styles.settingRow}>
               <View style={styles.settingInfo}>
-                <Text style={styles.settingLabel}>Phone Number {user?.phoneVerified && '✅'}</Text>
-                <Text style={styles.settingDescription}>
-                  {user?.phoneNumber 
-                    ? `${user.phoneNumber} ${user.phoneVerified ? '(Verified)' : '(Unverified)'}`
-                    : 'Link your phone to find friends'
-                  }
+                <Text style={styles.settingLabel}>
+                   Phone Number {user?.phoneNumber ? '✅' : ''}
                 </Text>
+                {user?.phoneNumber ? (
+                    <Text style={[styles.settingDescription, { color: COLORS.primary, fontWeight: '500' }]}>
+                        {user.phoneNumber} • Linked
+                    </Text>
+                ) : (
+                    <Text style={styles.settingDescription}>
+                        Link your phone to find friends
+                    </Text>
+                )}
               </View>
               <TouchableOpacity
                 onPress={() => {
-                  if (!user?.id) return;
-                  
-                  Alert.prompt(
-                    'Link Phone Number',
-                    'Enter your phone number (e.g. +1234567890) to allow friends to find you.',
-                    [
-                      { text: 'Cancel', style: 'cancel' },
-                      {
-                        text: 'Save',
-                        onPress: async (phone?: string) => {
-                          if (phone) {
-                            try {
-                              const cleaned = phone.replace(/\s/g, '');
-                              // Direct update for testing (No OTP)
-                              const { error } = await supabase
-                                .from('profiles')
-                                .update({ 
-                                  phone_number: cleaned,
-                                  // For testing, we can mark as verified or leave it, 
-                                  // but our checks might need to be looser.
-                                  // user.phoneVerified is derived from phone_confirmed_at usually.
-                                  // Let's just save the number.
-                                })
-                                .eq('id', user.id);
-                              
-                              if (error) throw error;
-
-                              Alert.alert('Success', 'Phone number saved! Friends can now find you.');
-                              
-                              // Refresh user data from Supabase
-                              await AuthService.getCurrentUser();
-                              loadData(); 
-                            } catch (e: any) {
-                              Alert.alert('Error', e.message || 'Failed to save phone number');
-                            }
-                          }
-                        }
-                      }
-                    ],
-                    'plain-text',
-                    user?.phoneNumber || ''
-                  );
+                  setPhoneNumberInput(user?.phoneNumber || '');
+                  setPhoneModalVisible(true);
                 }}
               >
                 <Text style={{ color: COLORS.primary, fontWeight: '600' }}>
@@ -342,7 +367,6 @@ export default function Profile() {
               </TouchableOpacity>
             </View>
           </View>
-
 
 
           <TouchableOpacity 
@@ -397,6 +421,59 @@ export default function Profile() {
           </Text>
         </View>
       </ScrollView>
+
+      {/* Phone Number Modal (For Android compatibility) */}
+      <Modal
+        visible={phoneModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPhoneModalVisible(false)}
+      >
+        <KeyboardAvoidingView 
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={styles.modalOverlay}
+        >
+            <View style={styles.modalContainer}>
+                <Text style={styles.modalTitle}>Link Phone Number</Text>
+                <Text style={styles.modalSubtitle}>
+                    Enter your phone number (e.g. +1234567890) so friends can find you.
+                </Text>
+                
+                <View style={styles.phoneInputContainer}>
+                    <View style={styles.countryCodeContainer}>
+                        <Text style={styles.countryCodeText}>🇮🇳 +91</Text>
+                        {/* A real app would have a picker here, hardcoded to India default as requested */}
+                    </View>
+                    <TextInput
+                        style={[styles.modalInput, styles.phoneInput]}
+                        value={phoneNumberInput}
+                        onChangeText={setPhoneNumberInput}
+                        placeholder="9876543210"
+                        placeholderTextColor={COLORS.gray[400]}
+                        keyboardType="phone-pad"
+                        autoFocus
+                    />
+                </View>
+                <Text style={styles.helperText}>Default country code is India (+91). Enter 10-digit number.</Text>
+                
+                <View style={styles.modalButtons}>
+                    <TouchableOpacity 
+                        style={[styles.modalButton, styles.cancelButton]}
+                        onPress={() => setPhoneModalVisible(false)}
+                    >
+                        <Text style={styles.cancelButtonText}>Cancel</Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity 
+                        style={[styles.modalButton, styles.saveButton]}
+                        onPress={handleSavePhone}
+                    >
+                        <Text style={styles.saveButtonText}>Save</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -408,9 +485,16 @@ const styles = StyleSheet.create({
   },
   header: {
     padding: 24,
-    paddingTop: 32,
+    paddingTop: 48,
     paddingBottom: 32,
     alignItems: 'center',
+    position: 'relative',
+  },
+  backButton: {
+    position: 'absolute',
+    left: 24,
+    top: 48,
+    zIndex: 10,
   },
   avatarContainer: {
     marginBottom: 16,
@@ -684,5 +768,72 @@ const styles = StyleSheet.create({
   footerSubtext: {
     fontSize: 11,
     color: COLORS.gray[400],
+  },
+  // Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContainer: {
+    backgroundColor: COLORS.white,
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 5,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: COLORS.dark,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: COLORS.gray[600],
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  modalInput: {
+    backgroundColor: COLORS.gray[100],
+    borderRadius: 12,
+    padding: 16,
+    fontSize: 16,
+    color: COLORS.dark,
+    marginBottom: 20,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  cancelButton: {
+    backgroundColor: COLORS.gray[100],
+  },
+  saveButton: {
+    backgroundColor: COLORS.primary,
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.gray[600],
+  },
+  saveButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.white,
   },
 });

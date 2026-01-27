@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 import StorageService from './StorageService';
 import AIService from './AIService';
 import LanguageService from './LanguageService';
+import PersonalCompanionService from './PersonalCompanionService';
 
 import { GROQ_API_KEY } from '../config/env';
 
@@ -149,18 +150,22 @@ class ChatService {
       const baseSystemPrompt = LanguageService.getSystemPrompt();
       
       // Enhanced system prompt with scope restrictions and persona
+      const personaContext = await PersonalCompanionService.getPersonaContext(this.currentSession.userId);
+
       const enhancedSystemPrompt = `${baseSystemPrompt}
+${personaContext}
 
 IMPORTANT RULES:
 1. You are JEETU, a warm and personal AI companion who excels at Event Management and Group Coordination.
-2. Your goal is to be a supportive partner in planning. Propose concrete plans while maintaining a friendly, personal tone.
-3. Always respond in ${LanguageService.getLanguageConfig().name} language.
-4. When a group or task is involved, suggest responsibilities clearly but kindly.
-5. If the user mentions other people (e.g., "with John and Sarah"), include them in the plan naturally.
-6. Proactively start the conversation with a proposed agenda or next steps, acting as a helpful friend who is good at organizing.
-7. Be concise but conversational. Use bullet points for tasks.
-8. If asked about unrelated topics, politely decline and steer back to planning with a personal touch.
-9. Suggest times, locations, and details if missing, guiding the user rather than just interrogating them.`;
+2. Adapt your tone based on the USER PERSONA provided above (e.g. be concise if they prefer efficiency).
+3. Your goal is to be a supportive partner in planning. Propose concrete plans while maintaining a friendly, personal tone.
+4. Always respond in ${LanguageService.getLanguageConfig().name} language.
+5. When a group or task is involved, suggest responsibilities clearly but kindly.
+6. If the user mentions other people (e.g., "with John and Sarah"), include them in the plan naturally.
+7. Proactively start the conversation with a proposed agenda or next steps, acting as a helpful friend who is good at organizing.
+8. Be concise but conversational. Use bullet points for tasks.
+9. If asked about unrelated topics, politely decline and steer back to planning with a personal touch.
+10. Suggest times, locations, and details if missing, guiding the user rather than just interrogating them.`;
 
       // Add system message at the beginning
       const messagesWithSystem = [
@@ -228,6 +233,60 @@ IMPORTANT RULES:
       console.error('Error sending message:', error);
       console.error('Error details:', error.message || error);
       throw new Error(error.message || 'Failed to get AI response. Please check your internet connection.');
+    }
+  }
+
+  /**
+   * Generate an AI response without a session (Stateless)
+   * Used for Group Mode where context is managed externally
+   */
+  async generateResponse(
+    messages: ChatMessage[],
+    userMessage: string
+  ): Promise<string> {
+    if (!this.apiKey) throw new Error('AI service not configured');
+
+    const conversationHistory = messages.map((msg) => ({
+      role: msg.role as 'user' | 'assistant' | 'system',
+      content: msg.content,
+    }));
+
+    const baseSystemPrompt = LanguageService.getSystemPrompt();
+    const advancedPrompt = `${baseSystemPrompt}
+    
+    CONTEXT: You are participating in a GROUP CHAT.
+    - Be concise and helpful.
+    - Address the group collectively if appropriate.
+    - Focus on the planning objective.
+    `;
+
+    const messagesWithSystem = [
+      { role: 'system', content: advancedPrompt },
+      ...conversationHistory,
+      { role: 'user', content: userMessage }
+    ];
+
+    try {
+      const response = await fetch(this.apiEndpoint, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          max_tokens: 1024,
+          temperature: 0.7,
+          messages: messagesWithSystem,
+        }),
+      });
+
+      if (!response.ok) throw new Error('API request failed');
+      const data = await response.json();
+      return data.choices[0].message.content || 'I could not generate a response.';
+    } catch (error) {
+      console.error('Error generating stateless response:', error);
+      return 'Sorry, I am having trouble connecting right now.';
     }
   }
 
@@ -495,6 +554,52 @@ IMPORTANT RULES:
       console.error('Error stopping speech:', error);
       // Don't throw - gracefully handle errors
     }
+  }
+
+  /**
+   * Generate a short, meaningful title for the chat session based on content
+   */
+  async generateSessionTitle(messages: ChatMessage[]): Promise<string> {
+     if (messages.length < 2) return 'New Chat';
+     
+     const conversationText = messages.slice(0, 4).map(m => `${m.role}: ${m.content}`).join('\n');
+     
+     try {
+         const response = await fetch(this.apiEndpoint, {
+             method: 'POST',
+             headers: {
+                 'Authorization': `Bearer ${this.apiKey}`,
+                 'Content-Type': 'application/json',
+             },
+             body: JSON.stringify({
+                 model: 'llama-3.3-70b-versatile',
+                 max_tokens: 15, // Keep it very short
+                 temperature: 0.5,
+                 messages: [
+                     {
+                         role: 'system',
+                         content: `Summarize the following conversation into a very short title (max 4-5 words). 
+Examples: "Trip to Goa", "Health Plan", "Birthday Ideas". 
+Do not use quotes. Return ONLY the title.`
+                     },
+                     {
+                         role: 'user',
+                         content: conversationText
+                     }
+                 ]
+             }),
+         });
+
+         if (!response.ok) return 'New Chat';
+         
+         const data = await response.json();
+         const title = data.choices[0]?.message?.content?.trim() || 'New Chat';
+         // Remove any quotes if model added them
+         return title.replace(/^"|"$/g, '').trim();
+     } catch (error) {
+         console.warn('Error generating title:', error);
+         return 'New Chat';
+     }
   }
 }
 

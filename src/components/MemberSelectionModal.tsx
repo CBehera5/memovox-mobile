@@ -67,7 +67,7 @@ export default function MemberSelectionModal({
       const { data, error } = await supabase
         .from('profiles')
         .select('id, full_name, email')
-        .or(`email.ilike.%${query}%,full_name.ilike.%${query}%`)
+        .or(`email.ilike.%${query}%,full_name.ilike.%${query}%,phone_number.ilike.%${query}%`)
         .limit(5);
 
       if (error) throw error;
@@ -241,18 +241,37 @@ export default function MemberSelectionModal({
           ) : (
             // CONTACTS TAB LIST
             <>
+              <View style={styles.searchContainer}>
+                <Search size={20} color={COLORS.gray[400]} style={styles.searchIcon} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Filter contacts..."
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                />
+              </View>
+
               {loading ? (
                 <ActivityIndicator size="small" color={COLORS.primary} style={styles.loader} />
               ) : (
                 <FlatList
-                  data={contacts}
+                  data={contacts.filter(c => 
+                     (c.name || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
+                     (c.phoneNumber || '').includes(searchQuery)
+                  )}
                   keyExtractor={(item, index) => item.contactId || index.toString()}
+                  keyboardShouldPersistTaps="handled"
                   ListEmptyComponent={
                     <View style={styles.placeholderContainer}>
                        <Text style={styles.placeholderText}>
-                         {permissionGranted ? 'No contacts found with phone numbers.' : 'Grant permission to find friends.'}
+                         {contacts.length === 0 
+                            ? (permissionGranted ? 'No contacts found.' : 'Grant permission to find friends.')
+                            : 'No matching contacts.'
+                         }
                        </Text>
-                       {!permissionGranted && (
+                       {!permissionGranted && contacts.length === 0 && (
                          <TouchableOpacity onPress={fetchContacts} style={[styles.inviteButton, { marginTop: 16 }]}>
                             <Text style={styles.inviteButtonText}>Sync Contacts</Text>
                          </TouchableOpacity>

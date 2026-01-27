@@ -7,6 +7,7 @@ import { supabase } from '../config/supabase';
 import { VoiceMemo } from '../types';
 import StorageService from './StorageService';
 import NotificationService from './NotificationService';
+import PersonalCompanionService from './PersonalCompanionService';
 
 export class VoiceMemoService {
   private readonly BUCKET_NAME = 'voice-memos';
@@ -120,6 +121,10 @@ export class VoiceMemoService {
       // Also save to local storage for offline access/speed
       await StorageService.appendVoiceMemo(memo);
       
+      // Trigger background persona refresh (throttled internally)
+      PersonalCompanionService.refreshUserPersona(memo.userId)
+        .catch(err => console.log('Background Persona Refresh:', err));
+
       return memo;
     } catch (error) {
       console.error('Error saving memo:', error);

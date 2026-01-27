@@ -240,9 +240,9 @@ Return ONLY valid JSON array, no additional text.`;
       const { data, error } = await supabase
         .from('agent_actions')
         .select('*')
-        .eq('userId', userId) // Corrected from user_id
-        //.or(`userId.eq.${userId},shared_with.cs.[{"user_id": "${userId}"}]`) // TODO: Fix shared logic later
-        .order('createdAt', { ascending: false }); // Corrected from created_at
+        // Select if I am the owner OR if I am in the shared_with list
+        .or(`"userId".eq.${userId},shared_with.cs.[{"user_id": "${userId}"}]`)
+        .order('"createdAt"', { ascending: false });
 
       if (!error && data) {
         // Map Supabase rows to AgentAction
@@ -385,10 +385,9 @@ Return ONLY valid JSON array, no additional text.`;
         if (action.dueDate) {
           const actionDate = this.parseActionDate(action.dueDate);
           if (actionDate) {
-              // Compare LOCAL dates
-              const actionLocal = new Date(actionDate);
-              actionLocal.setHours(0,0,0,0);
-              return actionLocal <= today;
+              // Include TODAY and FUTURE tasks (not just past/today)
+              // This shows all pending tasks with due dates
+              return true; // Show all tasks with valid due dates
           }
         }
         
@@ -421,22 +420,47 @@ Return ONLY valid JSON array, no additional text.`;
       
       // Sort by due date/time, then priority
       return todayActions.sort((a, b) => {
-        // First, sort by due date/time if available
-        const aDate = a.dueDate ? this.parseActionDate(a.dueDate) : null;
-        const bDate = b.dueDate ? this.parseActionDate(b.dueDate) : null;
-        
-        if (aDate && bDate) {
-          const timeDiff = aDate.getTime() - bDate.getTime();
-          if (timeDiff !== 0) return timeDiff;
+        // Helper to get effective time
+        const getTime = (action: AgentAction) => {
+           let d = action.dueDate ? this.parseActionDate(action.dueDate) : null;
+           if (!d && action.dueTime) {
+               // If only dueTime exists (rare)
+               try { d = new Date(action.dueTime); } catch(e) {}
+           }
+           if (d && action.dueTime) {
+               // Combine
+               try {
+                  const timeParts = action.dueTime.match(/(\d+):(\d+)/);
+                  if (timeParts) {
+                      const hours = parseInt(timeParts[1]);
+                      const minutes = parseInt(timeParts[2]);
+                      d.setHours(hours, minutes, 0, 0);
+                  } else {
+                     // Check if it's full ISO
+                     const full = new Date(action.dueTime);
+                     if (!isNaN(full.getTime())) {
+                        d.setHours(full.getHours(), full.getMinutes());
+                     }
+                  }
+               } catch (e) { console.warn('Sort time parse error', e); }
+           }
+           // If no date at all, effectively "end of day" or "unscheduled"?
+           // User wants priority. If urgent but no time, maybe Put at top?
+           // For now, treat no-date as Infinity (bottom) unless Priority High?
+           // Actually, let's treat no-date as end of list, then sort by priority.
+           return d ? d.getTime() : Number.MAX_SAFE_INTEGER;
+        };
+
+        const aTime = getTime(a);
+        const bTime = getTime(b);
+
+        if (aTime !== bTime) {
+            return aTime - bTime;
         }
-        
-        // If one has a date and the other doesn't, prioritize the one with a date
-        if (aDate && !bDate) return -1;
-        if (!aDate && bDate) return 1;
         
         // Sort by priority
         const priorityOrder = { high: 0, medium: 1, low: 2 };
-        return priorityOrder[a.priority] - priorityOrder[b.priority];
+        return priorityOrder[a.priority || 'low'] - priorityOrder[b.priority || 'low'];
       });
     } catch (error) {
       console.error('Error getting today actions:', error);
@@ -806,6 +830,56 @@ Return ONLY valid JSON array, no additional text.`;
       console.error('Error in shareAction:', error);
       return false;
     }
+  }
+
+  /**
+   * Get Mock Smart Actions for UI Demo
+   */
+  async getMockSmartActions(): Promise<AgentAction[]> {
+      const today = new Date().toISOString();
+      const mock: AgentAction[] = [
+          {
+              id: 'mock-1',
+              title: 'Morning Supplement',
+              description: 'Take Vitamin D and Magnesium with breakfast.',
+              type: 'task',
+              priority: 'high',
+              status: 'pending',
+              createdAt: today,
+              userId: 'demo',
+              shared_with: [],
+              dueDate: today,
+              createdFrom: 'mock',
+              smartTemplate: { type: 'health_tracker' } // This extra prop is fine vs AgentAction type? Maybe need 'as any' if strictly typed
+          } as any,
+          {
+              id: 'mock-2',
+              title: 'Review Project Proposal',
+              description: 'Go through the Q1 roadmap slides.',
+              type: 'task',
+              priority: 'medium',
+              status: 'pending',
+              createdAt: today,
+              userId: 'demo',
+              shared_with: [],
+              dueDate: today,
+              createdFrom: 'mock'
+          },
+          {
+              id: 'mock-3',
+              title: 'Call Mom',
+              description: 'Catch up about the weekend plan.',
+              type: 'task',
+              priority: 'medium',
+              status: 'pending',
+              createdAt: today,
+              userId: 'demo',
+              shared_with: [],
+              dueDate: today,
+              createdFrom: 'mock'
+          }
+      ];
+      return mock;
   }
 }
 

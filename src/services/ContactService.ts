@@ -41,18 +41,23 @@ class ContactService {
 
   /**
    * Find which contacts are registered on MemoVox
+   * Uses fuzzy matching (last 10 digits) to handle formatting differences.
    */
   async findMemoVoxUsers(contacts: Contacts.Contact[]): Promise<ContactMatch[]> {
-    // 1. Extract and normalize all phone numbers from contacts
+    // 1. Prepare local phone map for fast lookup
+    // Map last 10 digits -> Contact
     const phoneMap = new Map<string, Contacts.Contact>();
     const allPhones: string[] = [];
 
     contacts.forEach(contact => {
       contact.phoneNumbers?.forEach(pn => {
-        const normalized = this.normalizePhoneNumber(pn.number || '');
-        if (normalized.length > 5) { // Basic validation
-          phoneMap.set(normalized, contact);
-          allPhones.push(normalized);
+        // Remove all non-digits
+        const digits = (pn.number || '').replace(/\D/g, '');
+        // Keep last 10 digits for matching (ignoring country code for now)
+        if (digits.length >= 10) {
+            const last10 = digits.slice(-10);
+            phoneMap.set(last10, contact);
+            allPhones.push(last10);
         }
       });
     });
@@ -60,53 +65,59 @@ class ContactService {
     if (allPhones.length === 0) return [];
 
     try {
-      // 2. Query Supabase for these phone numbers
-      // We process in chunks if too many, but for now 1 query
-      // Important: RLS must allow seeing basic profile info if needed, or we use a secure RPC.
-      // For MVP, we assume profiles are public or we use anon key.
+      // 2. Query Supabase for ALL profiles with phone numbers (RLS allows select true)
+      // Note: In a large app, we would send the hash of phones or use an RPC.
+      // For now (MVP), we fetch profiles and match locally to ensure "friends" are found.
       
       const { data, error } = await supabase
         .from('profiles')
         .select('id, full_name, phone_number')
-        .in('phone_number', allPhones);
+        .neq('phone_number', null)
+        .neq('phone_number', ''); // Filter empty strings too
 
       if (error) throw error;
 
       // 3. Match results back to contacts
       const matches: ContactMatch[] = [];
-      const registeredPhones = new Set(data?.map(p => p.phone_number));
+      const registeredIds = new Set<string>();
 
-      // Add registered users
+      // Check each DB user against local contact map
       data?.forEach(user => {
-         const contact = phoneMap.get(user.phone_number);
-         if (contact) {
-           matches.push({
-             contactId: contact.id,
-             name: contact.name, // Use contact name from phone book for familiarity
-             phoneNumber: user.phone_number,
-             isRegistered: true,
-             userId: user.id
-           });
+         if (!user.phone_number) return;
+         
+         const userDigits = user.phone_number.replace(/\D/g, '');
+         // Try matching last 10 digits (most common)
+         if (userDigits.length >= 10) {
+             const userLast10 = userDigits.slice(-10);
+             const contact = phoneMap.get(userLast10);
+             
+             if (contact) {
+                 console.log(`Matched Contact: ${contact.name} with App User: ${user.full_name}`);
+                 matches.push({
+                     contactId: contact.id,
+                     name: contact.name, // Use contact name from phone book
+                     phoneNumber: user.phone_number,
+                     isRegistered: true,
+                     userId: user.id
+                 });
+                 registeredIds.add(contact.id);
+             }
          }
       });
 
-      // Add non-registered users (up to a limit or all)
-      // For privacy/performance, we might only return registered ones, but user wants to invite friends.
+      // 4. Add non-registered users (Invites)
+      // Only add if not already matched as registered
       contacts.forEach(contact => {
-        const phone = contact.phoneNumbers?.[0]?.number;
-        const normalized = this.normalizePhoneNumber(phone || '');
+        if (registeredIds.has(contact.id)) return;
         
-        if (phone && !registeredPhones.has(normalized)) {
-          // Avoid duplicates if same contact has multiple numbers check
-           const alreadyAdded = matches.find(m => m.contactId === contact.id);
-           if (!alreadyAdded) {
+        const phone = contact.phoneNumbers?.[0]?.number;
+        if (phone) {
              matches.push({
                contactId: contact.id,
                name: contact.name,
                phoneNumber: phone,
                isRegistered: false
              });
-           }
         }
       });
 

@@ -8,9 +8,10 @@ import { ChevronLeft, ChevronRight, Calendar as CalendarIcon } from 'lucide-reac
 interface CalendarWidgetProps {
   actions: AgentAction[];
   onDatePress?: (date: Date) => void;
+  selectedDate?: Date;
 }
 
-export default function CalendarWidget({ actions, onDatePress }: CalendarWidgetProps) {
+export default function CalendarWidget({ actions, onDatePress, selectedDate }: CalendarWidgetProps) {
   const [currentDate, setCurrentDate] = useState(new Date());
   
   // Get current week based on currentDate state
@@ -64,8 +65,9 @@ export default function CalendarWidget({ actions, onDatePress }: CalendarWidgetP
   };
 
   // Count actions for a date
-  const getActionCount = (date: Date) => {
-    return actions.filter(action => {
+  // Get status for a date
+  const getDateStatus = (date: Date) => {
+    const dayActions = actions.filter(action => {
       if (!action.dueDate) return false;
       const actionDate = new Date(action.dueDate);
       return (
@@ -73,7 +75,26 @@ export default function CalendarWidget({ actions, onDatePress }: CalendarWidgetP
         actionDate.getMonth() === date.getMonth() &&
         actionDate.getFullYear() === date.getFullYear()
       );
-    }).length;
+    });
+
+    if (dayActions.length === 0) return null;
+
+    const count = dayActions.length;
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const checkDate = new Date(date);
+    checkDate.setHours(0, 0, 0, 0);
+    
+    // Check if any pending
+    const hasPending = dayActions.some(a => a.status !== 'completed');
+    
+    if (checkDate.getTime() < now.getTime() && hasPending) {
+        return { count, type: 'missed', color: '#EF4444' }; // Red
+    }
+    if (hasPending) {
+        return { count, type: 'pending', color: '#3B82F6' }; // Blue
+    }
+    return { count, type: 'completed', color: '#10B981' }; // Green
   };
 
   const isToday = (date: Date) => {
@@ -110,41 +131,50 @@ export default function CalendarWidget({ actions, onDatePress }: CalendarWidgetP
       
       <View style={styles.weekContainer}>
         {weekDays.map((date, index) => {
-          const actionsOnDate = hasActions(date);
-          const actionCount = getActionCount(date);
+          const status = getDateStatus(date);
           const today = isToday(date);
           const inCurrentMonth = isSelectedMonth(date);
+          const isSelected = selectedDate && (
+            date.getDate() === selectedDate.getDate() &&
+            date.getMonth() === selectedDate.getMonth() &&
+            date.getFullYear() === selectedDate.getFullYear()
+          );
           
           return (
             <TouchableOpacity
               key={index}
               style={[
                 styles.dayContainer,
-                today && styles.todayContainer,
+                isSelected && styles.todayContainer,
               ]}
               onPress={() => onDatePress?.(date)}
             >
               <Text style={[
                 styles.dayName, 
-                today && styles.todayText,
+                isSelected && styles.todayText,
                 !inCurrentMonth && styles.mutedText
               ]}>
                 {dayNames[index]}
               </Text>
-              <View style={[styles.dateCircle, today && styles.todayCircle]}>
+              <View style={[styles.dateCircle, isSelected && styles.todayCircle]}>
                 <Text style={[
                   styles.dateText, 
-                  today && styles.todayDateText,
+                  isSelected && styles.todayDateText,
                   !inCurrentMonth && styles.mutedText
                 ]}>
                   {date.getDate()}
                 </Text>
               </View>
-              {actionsOnDate && (
-                <View style={styles.indicator}>
-                  <Text style={styles.indicatorText}>{actionCount}</Text>
-                </View>
-              )}
+              {(() => {
+                  const status = getDateStatus(date);
+                  if (!status) return null;
+                  return (
+                    <View style={[styles.indicator, { backgroundColor: status.color }]}>
+                      {/* Only show count if significant or standard? User asked for 'mark the number' */}
+                      <Text style={styles.indicatorText}>{status.count}</Text>
+                    </View>
+                  );
+              })()}
             </TouchableOpacity>
           );
         })}

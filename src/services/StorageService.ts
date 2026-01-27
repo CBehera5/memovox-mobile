@@ -75,13 +75,7 @@ export class StorageService {
     }
   }
 
-  // Legacy MemoData support (can be deprecated)
-  async saveMemo(memo: MemoData): Promise<void> {}
-  async getMemo(id: string): Promise<MemoData | null> { return null; }
-  async getAllMemos(): Promise<MemoData[]> { return []; }
-  async deleteMemo(id: string): Promise<void> {}
-  async searchMemos(query: string): Promise<MemoData[]> { return []; }
-  
+  // Notification storage (local fallback - primary storage is Supabase)
   async saveNotification(notification: Notification): Promise<void> {
     // Implementation needed if used
   }
@@ -305,6 +299,18 @@ export class StorageService {
     } catch (error) {
       console.error('Error getting tasks:', error);
       return [];
+    }
+  }
+
+  async updateTaskStatus(actionId: string, status: 'pending' | 'completed' | 'cancelled'): Promise<void> {
+    try {
+      const tasks = await this.getTasks();
+      const updatedTasks = tasks.map(task => 
+        task.id === actionId ? { ...task, status } : task
+      );
+      await this.saveTasks(updatedTasks);
+    } catch (error) {
+      console.error('Error updating task status:', error);
     }
   }
 

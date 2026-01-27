@@ -1,6 +1,6 @@
 // app/(tabs)/home.tsx
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
@@ -29,18 +29,28 @@ import VoiceMemoService from '../../src/services/VoiceMemoService';
 import AuthService from '../../src/services/AuthService';
 import AgentService from '../../src/services/AgentService';
 import AIService from '../../src/services/AIService';
-import { User, VoiceMemo, UserPersona, AgentAction, CompletionStats } from '../../src/types';
+import { supabase } from '../../src/config/supabase';
+import { User, VoiceMemo, UserPersona, AgentAction, CompletionStats, MemoCategory } from '../../src/types';
 import { COLORS, GRADIENTS, CATEGORY_COLORS, CATEGORY_ICONS, TYPE_BADGES } from '../../src/constants';
 import { formatRelativeTime, sortByDate } from '../../src/utils';
 import CompletionRing from '../../src/components/CompletionRing';
 import CalendarWidget from '../../src/components/CalendarWidget';
 import SmartTaskCard from '../../src/components/SmartTaskCard';
+import { Ionicons } from '@expo/vector-icons';
+import SmartActionCard from '../../src/components/SmartActionCard';
+import GradientHero from '../../src/components/GradientHero';
+import PlanningCategorySelector from '../../src/components/PlanningCategorySelector';
+import TaskOptionsModal from '../../src/components/TaskOptionsModal';
+import MemberSelectionModal from '../../src/components/MemberSelectionModal';
 import AnimatedIconButton from '../../src/components/AnimatedIconButton';
 import AnimatedActionButton from '../../src/components/AnimatedActionButton';
 import TaskMenu from '../../src/components/TaskMenu';
-import MemberSelectionModal from '../../src/components/MemberSelectionModal';
 import TrialBanner from '../../src/components/TrialBanner';
 import GoogleCalendarSync from '../../src/components/GoogleCalendarSync';
+import NotificationModal from '../../src/components/NotificationModal';
+import SmartPlanningModal from '../../src/components/planning/SmartPlanningModal';
+import IllustrativeTaskBuilder from '../../src/components/planning/IllustrativeTaskBuilder';
+import { getHealthTasks, getIdeasTasks, getDailyTasks, getChoresTasks, getCategoryQuestions } from '../../src/config/planningQuestions';
 import { cleanImportedText, parseWhatsAppExport } from '../../src/utils/parsers';
 import { formatMemoForExport } from '../../src/utils/exportUtils';
 import { Share as RNShare } from 'react-native'; // Resize alias if needed or just use Share
@@ -66,12 +76,24 @@ export default function Home() {
   const [memberModalVisible, setMemberModalVisible] = useState(false);
   const [selectedTaskIdForSharing, setSelectedTaskIdForSharing] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   // Audio playback state
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const [playingMemoId, setPlayingMemoId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-
+  const [selectedAction, setSelectedAction] = useState<AgentAction | null>(null);
+  const [optionsModalVisible, setOptionsModalVisible] = useState(false);
+  const [notificationModalVisible, setNotificationModalVisible] = useState(false);
+  
+  // Smart Planning Modal State
+  const [showSmartPlanningModal, setShowSmartPlanningModal] = useState(false);
+  const [showTaskBuilder, setShowTaskBuilder] = useState(false);
+  const [planningCategory, setPlanningCategory] = useState<string>('');
+  const [planningAnswers, setPlanningAnswers] = useState<Record<string, any>>({});
+  const [suggestedTasks, setSuggestedTasks] = useState<{ title: string; icon: string }[]>([]);
+  
   // Animation for background color
   const colorAnim = useRef(new Animated.Value(0)).current;
 
@@ -97,6 +119,13 @@ export default function Home() {
     outputRange: [COLORS.primary, COLORS.accent || '#ec4899'], // Indigo to Pink
   });
 
+  // Refresh data when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [])
+  );
+
   useEffect(() => {
     loadData();
   }, []);
@@ -109,6 +138,49 @@ export default function Home() {
     }, [])
   );
 
+  // Realtime Notifications Listener
+  useEffect(() => {
+    if (!user) return;
+
+    console.log('Setting up realtime notification listener for', user.id);
+    const channel = supabase
+      .channel('public:notifications')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` },
+        async (payload) => {
+          console.log('🔔 Realtime notification received:', payload);
+          
+          // 1. Refresh data (badge count and lists)
+          loadData();
+          
+          // 2. Schedule local alert immediately to notify user
+          const newNotif = payload.new;
+          if (newNotif) {
+              const notificationObj = {
+                  id: newNotif.id,
+                  userId: newNotif.user_id,
+                  memoId: newNotif.data?.memoId || '',
+                  type: newNotif.type,
+                  title: newNotif.title,
+                  body: newNotif.body,
+                  scheduledFor: new Date().toISOString(),
+                  sent: false,
+                  createdAt: newNotif.created_at,
+                  data: newNotif.data
+              };
+              // Schedule immediately (since s/he just got it)
+              await NotificationService.scheduleNotification(notificationObj as any);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user]);
+
   // Cleanup audio on unmount
   useEffect(() => {
     return () => {
@@ -119,7 +191,15 @@ export default function Home() {
   }, [sound]);
 
   // Audio playback functions
-  const handleShareTask = (taskId: string) => {
+  const handleCategoryPress = (category: string) => {
+    if (category === 'Health') {
+        router.push({ pathname: '/(tabs)/chat', params: { template: 'Health' } });
+    } else {
+        setSelectedCategory(prev => prev === category ? null : category);
+    }
+  };
+
+  const handleShareTask = async (taskId: string) => {
     setSelectedTaskIdForSharing(taskId);
     setMemberModalVisible(true);
   };
@@ -273,7 +353,7 @@ export default function Home() {
     }
   };
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       // Get current user
       const userData = await AuthService.getCurrentUser();
@@ -308,12 +388,32 @@ export default function Home() {
     } catch (error) {
       console.error('Error loading data:', error);
     }
-  };
+  }, []);
 
-  const loadAgentData = async (userId: string) => {
+  const loadAgentData = useCallback(async (userId: string) => {
     try {
       // Get today's actions
-      const today = await AgentService.getTodayActions(userId);
+      let today = await AgentService.getTodayActions(userId);
+      
+      // Sort by Priority (High > Medium > Low) then by Time
+      const priorityWeights = { high: 3, medium: 2, low: 1 };
+      today.sort((a, b) => {
+          // 1. Priority
+          const pA = priorityWeights[a.priority] || 0;
+          const pB = priorityWeights[b.priority] || 0;
+          if (pA !== pB) return pB - pA; // Descending (High first)
+
+          // 2. Time
+          const dateA = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+          const dateB = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+          return dateA - dateB; // Ascending (Earliest first)
+      });
+      /*
+      if (today.length === 0) {
+          console.log('Using Mock Data for Dashboard Demo');
+          today = await AgentService.getMockSmartActions();
+      }
+      */
       setTodayActions(today);
 
       // Get upcoming actions (next 7 days)
@@ -341,12 +441,97 @@ export default function Home() {
         const bPriority = priorityOrder[b.priority || 'low'];
         return bPriority - aPriority;
       });
-      setAllActions(sortedActions);
+
+      
+      // MOCK DATA FOR DEMO PURPOSES (To visualize Smart Templates)
+      const demoSmartActions: AgentAction[] = [
+          {
+              id: 'health-check-001',
+              userId: userId,
+              type: 'task',
+              title: 'Daily Health Goals',
+              description: 'Stay hydrated and active',
+              priority: 'high',
+              status: 'pending',
+              createdFrom: 'demo',
+              createdAt: new Date().toISOString(),
+              dueDate: new Date().toISOString(), // Due today
+              smartTemplate: {
+                  type: 'checklist',
+                  items: [
+                      { text: '💧 Drink 2L Water', checked: false },
+                      { text: '💊 Take Multivitamin', checked: true },
+                      { text: '🧘 10 min Meditation', checked: false },
+                      { text: '🥗 Eat Salad', checked: false },
+                      { text: '🚶 5000 Steps', checked: false }
+                  ]
+              }
+          },
+          {
+            id: 'demo_health',
+            userId: userId,
+            type: 'task',
+            title: 'Daily Steps',
+            priority: 'medium',
+            status: 'pending',
+            createdFrom: 'demo',
+            createdAt: new Date().toISOString(),
+            dueDate: new Date().toISOString(), // Due today for demo
+            smartTemplate: {
+                type: 'health_tracker',
+                currentValue: 1200,
+                targetValue: 8000,
+                metaLabel: '1200/8000 steps'
+            }
+          },
+          {
+            id: 'demo_gym',
+            userId: userId,
+            type: 'task',
+            title: 'Gym Session',
+            priority: 'high',
+            status: 'pending',
+            createdFrom: 'demo',
+            createdAt: new Date().toISOString(),
+            dueDate: new Date().toISOString(), // Due today for demo
+            smartTemplate: {
+                type: 'health_tracker',
+                currentValue: 2,
+                targetValue: 4,
+                unit: 'hours',
+                metaLabel: '2/4 hours'
+            }
+          },
+          {
+            id: 'demo_meeting',
+            userId: userId,
+            type: 'task',
+            title: 'Meeting with Ashu',
+            priority: 'high',
+            status: 'pending',
+            createdFrom: 'demo',
+            createdAt: new Date().toISOString(),
+            dueDate: new Date().toISOString(), // Due today for demo
+            smartTemplate: {
+                type: 'meeting_countdown',
+                meetingTime: new Date(new Date().setHours(14, 30)).toISOString(),
+                platform: 'meet'
+            }
+          }
+      ];
+
+      setAllActions([...demoSmartActions, ...sortedActions]);
+
+      setAllActions([...demoSmartActions, ...sortedActions]);
+
+      // Fetch precise notification count
+      const count = await NotificationService.getUnreadNotificationCount(userId);
+      setUnreadCount(count);
 
     } catch (error) {
       console.error('Error loading agent data:', error);
     }
-  };
+  }, []);
 
   const calculateUrgency = (allMemos: VoiceMemo[]): string => {
     // Count recent action items (events/reminders from past week)
@@ -510,768 +695,261 @@ export default function Home() {
     }
   };
 
-  const renderCarouselCard = (index: number) => {
-    if (index === 0) {
-      // Progress Card
-      return (
-        <View style={styles.carouselCard}>
-          <Text style={styles.carouselCardTitle}>📊 Your Progress</Text>
-          {completionStats && completionStats.totalTasks > 0 ? (
-            <>
-              <CompletionRing percentage={completionStats.percentage} size={100} />
-              <View style={styles.carouselStatsGrid}>
-                <View style={styles.carouselStatItem}>
-                  <Text style={styles.carouselStatValue}>{completionStats.completedTasks}</Text>
-                  <Text style={styles.carouselStatLabel}>Done</Text>
-                </View>
-                <View style={styles.carouselStatItem}>
-                  <Text style={styles.carouselStatValue}>{completionStats.totalTasks - completionStats.completedTasks}</Text>
-                  <Text style={styles.carouselStatLabel}>Pending</Text>
-                </View>
-                <View style={styles.carouselStatItem}>
-                  <Text style={styles.carouselStatValue}>
-                    {completionStats.trend === 'up' ? '📈' : completionStats.trend === 'down' ? '📉' : '➡️'}
-                  </Text>
-                  <Text style={styles.carouselStatLabel}>Trend</Text>
-                </View>
-              </View>
-            </>
-          ) : (
-            <Text style={styles.carouselEmptyText}>No tasks yet. Create some to track progress!</Text>
-          )}
-        </View>
-      );
-    } else if (index === 1) {
-      // Today's Tasks Card
-      return (
-        <View style={styles.carouselCard}>
-          <Text style={styles.carouselCardTitle}>📅 Today's Tasks</Text>
-          {todayActions.length > 0 ? (
-            <ScrollView style={styles.carouselTasksList} showsVerticalScrollIndicator={false}>
-              {todayActions.slice(0, 3).map((action) => (
-                <View key={action.id} style={styles.carouselTaskItem}>
-                  <View style={styles.carouselTaskHeader}>
-                    <Text style={styles.carouselTaskTitle} numberOfLines={1}>{action.title}</Text>
-                    <View style={[
-                      styles.carouselPriorityBadge,
-                      action.priority === 'high' && styles.priorityHighBadge,
-                      action.priority === 'medium' && styles.priorityMediumBadge,
-                      action.priority === 'low' && styles.priorityLowBadge,
-                    ]}>
-                      <Text style={styles.carouselPriorityText}>{action.priority?.toUpperCase()}</Text>
-                    </View>
-                  </View>
-                  {action.dueTime && (
-                    <Text style={styles.carouselTaskTime}>⏰ {action.dueTime}</Text>
-                  )}
-                  <TouchableOpacity
-                    style={styles.carouselCompleteButton}
-                    onPress={async () => {
-                      if (user) {
-                        await AgentService.completeAction(action.id, user.id);
-                        await loadAgentData(user.id);
-                        Alert.alert('✓ Done!', `"${action.title}" completed`);
-                      }
-                    }}
-                  >
-                    <Text style={styles.carouselCompleteButtonText}>✓ Complete</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </ScrollView>
-          ) : (
-            <Text style={styles.carouselEmptyText}>Nothing due today! 🎉</Text>
-          )}
-        </View>
-      );
-    } else {
-      // This Week Calendar Card
-      return (
-        <View style={styles.carouselCard}>
-          <Text style={styles.carouselCardTitle}>📅 This Week</Text>
-          <CalendarWidget 
-            actions={[...todayActions, ...upcomingActions]}
-            onDatePress={(date) => {
-              const dateActions = [...todayActions, ...upcomingActions].filter(action => {
-                if (!action.dueDate) return false;
-                const actionDate = new Date(action.dueDate);
-                return (
-                  actionDate.getDate() === date.getDate() &&
-                  actionDate.getMonth() === date.getMonth() &&
-                  actionDate.getFullYear() === date.getFullYear()
-                );
-              });
-              
-              if (dateActions.length > 0) {
-                const taskList = dateActions.map((a, idx) => `${idx + 1}. ${a.title}`).join('\n');
-                Alert.alert(
-                  `📅 ${date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}`,
-                  `${dateActions.length} task(s):\n\n${taskList}`,
-                  [{ text: 'OK' }]
-                );
-              } else {
-                Alert.alert(
-                  `📅 ${date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}`,
-                  'No tasks scheduled for this date.'
-                );
-              }
-            }}
-          />
-        </View>
-      );
-    }
-  };
-
   return (
     <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <View style={styles.headerContent}>
+          <View style={styles.headerLeft}>
+              <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                 <TouchableOpacity style={{marginRight: 12}} onPress={() => router.push('/settings-screen')}>
+                    <Ionicons name="menu" size={28} color={COLORS.textPrimary} />
+                 </TouchableOpacity>
+                 <View>
+                     <Text style={styles.greeting}>Hi {user?.name?.split(' ')[0] || 'There'} 👋</Text>
+                     <Text style={styles.subtitle}>Let's be productive today</Text>
+                 </View>
+              </View>
+          </View>
+          <View style={styles.headerIcons}>
+            <TouchableOpacity style={styles.headerIconButton} onPress={() => setNotificationModalVisible(true)}>
+                <Ionicons name="notifications-outline" size={24} color="#000" />
+                {unreadCount > 0 && (
+                    <View style={styles.badge}>
+                        <Text style={styles.badgeText}>{unreadCount}</Text>
+                    </View>
+                )}
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.headerIconButton} onPress={() => router.push('/(tabs)/social')}>
+                <Ionicons name="people-outline" size={24} color="#000" />
+                <View style={styles.badge}>
+                    <Text style={styles.badgeText}>2</Text> 
+                </View>
+            </TouchableOpacity>
+          </View>
+      </View>
+      </View>
+
       <ScrollView
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
         contentContainerStyle={{ paddingBottom: 100 }}
       >
-        {/* Trial Banner */}
-        <TrialBanner />
-
-        {/* Header with Icons */}
-        <Animated.View style={[styles.header, { backgroundColor }]}>
-          <View style={styles.headerContent}>
-            <View style={styles.headerLeft}>
-              <Text style={styles.greeting}>Hello, {user?.name?.split(' ')[0] || 'there'}! 👋</Text>
-            </View>
-            
-            <View style={styles.headerIcons}>
-              {/* Notifications Icon - Shows today's action items count */}
-              <TouchableOpacity 
-                style={styles.headerIconButton}
-                onPress={() => {
-                  // Filter actions for today and overdue
-                  const todayActions = allActions.filter(action => {
-                    if (!action.dueDate) return false;
-                    const actionDateStr = action.dueDate.split('T')[0];
-                    const todayStr = new Date().toISOString().split('T')[0]; 
-                    // Note: new Date().toISOString() gives UTC date. 
-                    // But we want local today.
-                    const localToday = new Date();
-                    localToday.setHours(0,0,0,0);
-                    
-                    const [y, m, d] = actionDateStr.split('-').map(Number);
-                    const actionDate = new Date(y, m - 1, d);
-                    
-                    return actionDate.getTime() === localToday.getTime();
-                  });
-                  
-                  const overdueActions = allActions.filter(action => {
-                    if (!action.dueDate || action.status !== 'pending') return false;
-                    const actionDateStr = action.dueDate.split('T')[0];
-                    const [y, m, d] = actionDateStr.split('-').map(Number);
-                    const actionDate = new Date(y, m - 1, d);
-                    const localToday = new Date();
-                    localToday.setHours(0,0,0,0);
-                    
-                    return actionDate.getTime() < localToday.getTime();
-                  });
-                  
-                  const totalCount = todayActions.length + overdueActions.length;
-                  
-                  if (totalCount === 0) {
-                    Alert.alert(
-                      '✅ All Clear!',
-                      'You have no action items due today or overdue.\n\nGreat job staying on top of things! 🎉',
-                      [{ text: 'Awesome!' }]
-                    );
-                  } else {
-                    let message = '';
-                    
-                    if (overdueActions.length > 0) {
-                      message += `⚠️ OVERDUE (${overdueActions.length}):\n`;
-                      message += overdueActions.slice(0, 3).map(a => `• ${a.title}`).join('\n');
-                      if (overdueActions.length > 3) {
-                        message += `\n• ...and ${overdueActions.length - 3} more`;
-                      }
-                      message += '\n\n';
-                    }
-                    
-                    if (todayActions.length > 0) {
-                      message += `📅 TODAY (${todayActions.length}):\n`;
-                      message += todayActions.slice(0, 3).map(a => `• ${a.title}`).join('\n');
-                      if (todayActions.length > 3) {
-                        message += `\n• ...and ${todayActions.length - 3} more`;
-                      }
-                    }
-                    
-                    Alert.alert(
-                      `📋 ${totalCount} Task${totalCount > 1 ? 's' : ''}`,
-                      message,
-                      [
-                        { text: 'Dismiss', style: 'cancel' },
-                        {
-                          text: 'View All Tasks',
-                          onPress: () => {
-                            // Scroll to "Let's get this done" section
-                            // User can see all tasks there
-                          }
-                        }
-                      ]
-                    );
-                  }
-                }}
-              >
-                <Bell size={20} color={COLORS.dark} />
-                {(() => {
-                  const today = new Date();
-                  today.setHours(0, 0, 0, 0);
-                  
-                  const count = allActions.filter(action => {
-                    if (!action.dueDate || action.status !== 'pending') return false;
-                    
-                    // Parse YYYY-MM-DD string as local date
-                    // action.dueDate is ISO string (UTC) e.g. "2023-11-20T00:00:00.000Z"
-                    // We want to check if that DATE matches today or earlier
-                    const actionDateStr = action.dueDate.split('T')[0];
-                    const [y, m, d] = actionDateStr.split('-').map(Number);
-                    const actionDate = new Date(y, m - 1, d); // Local midnight
-                    
-                    return actionDate.getTime() <= today.getTime();
-                  }).length;
-                  
-                  return count > 0 ? (
-                    <View style={styles.badge}>
-                      <Text style={styles.badgeText}>{count}</Text>
-                    </View>
-                  ) : null;
-                })()}
-              </TouchableOpacity>
-
-              {/* Messages Icon - Shows group plans count */}
-              <TouchableOpacity 
-                style={styles.headerIconButton}
-                onPress={() => {
-                  // Mark as read when opening (mock behavior until UI exists)
-                  if (user?.id) {
-                    NotificationService.markNotificationsAsRead(user.id);
-                    setUnreadCount(0);
-                  }
-                  
-                  Alert.alert(
-                    'Group Plans',
-                    'Collaborate with others on shared tasks! This feature is coming soon.\n\n💡 You\'ll be able to:\n• Share memos with groups\n• Collaborate on tasks\n• Track team progress',
-                    [{ text: 'Got it!' }]
-                  );
-                }}
-              >
-                <MessageSquare size={20} color={COLORS.dark} />
-                {unreadCount > 0 && (
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeText}>{unreadCount}</Text>
-                  </View>
-                )}
-                {unreadCount === 0 && (
-                <View style={[styles.badge, styles.badgeInactive]}>
-                  <Text style={styles.badgeText}>0</Text>
-                </View>
-                )}
-              </TouchableOpacity>
-
-              {/* Settings Icon */}
-              <TouchableOpacity 
-                style={styles.headerIconButton}
-                onPress={() => router.push('/(tabs)/profile')}
-              >
-                <Settings size={20} color={COLORS.dark} />
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Animated.View>
-
-
-
-        {/* Search Bar */}
-        <View style={styles.section}>
-          <View style={styles.searchContainer}>
-            <Search size={20} color={COLORS.gray[400]} style={styles.searchIcon} />
+        <View style={styles.searchContainer}>
+            <Ionicons name="search" size={20} color={COLORS.gray[400]} style={styles.searchIcon} />
             <TextInput
-              style={styles.searchInput}
-              placeholder="Search your tasks..."
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              placeholderTextColor={COLORS.gray[400]}
-              returnKeyType="search"
+                style={styles.searchInput}
+                placeholder="Search tasks..."
+                placeholderTextColor={COLORS.gray[400]}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
             />
-            {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearButton}>
-                <X size={16} color={COLORS.gray[400]} />
-              </TouchableOpacity>
-            )}
-          </View>
         </View>
 
-        {/* Empty State for New Users (only if search is empty) */}
-        {memos.length === 0 && searchQuery === '' && (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyStateEmoji}>🎙️</Text>
-            <Text style={styles.emptyStateTitle}>Welcome to MemoVox!</Text>
-            <Text style={styles.emptyStateText}>
-              Start by recording your first voice memo. JEETU will transcribe, organize, and extract tasks automatically.
-            </Text>
-            
-            <View style={styles.emptyStateFeatures}>
-              <View style={styles.featureItem}>
-                <Text style={styles.featureEmoji}>✨</Text>
-                <Text style={styles.featureText}>AI-powered transcription</Text>
-              </View>
-              <View style={styles.featureItem}>
-                <Text style={styles.featureEmoji}>🤖</Text>
-                <Text style={styles.featureText}>Smart task extraction</Text>
-              </View>
-              <View style={styles.featureItem}>
-                <Text style={styles.featureEmoji}>📊</Text>
-                <Text style={styles.featureText}>Automatic organization</Text>
-              </View>
-            </View>
+        {/* <GradientHero /> Banner Removed as per user request */}
 
-            <TouchableOpacity
-              style={styles.emptyStateCTA}
-              onPress={() => router.push('/(tabs)/record')}
-            >
-              <Text style={styles.emptyStateCTAText}>🎤 Record Your First Memo</Text>
+
+
+
+
+        {/* Category Filters */}
+        <PlanningCategorySelector 
+            selectedCategory={selectedCategory} 
+            onSelectCategory={(cat) => {
+              // First click: start smart planning for this category
+              // Double click: just filter
+              if (selectedCategory !== cat) {
+                setPlanningCategory(cat);
+                setShowSmartPlanningModal(true);
+              }
+              setSelectedCategory(prev => prev === cat ? null : cat);
+            }} 
+        />
+
+        {/* Important Tasks Dashboard */}
+        <View style={styles.section}>
+           <View style={{flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginBottom:12}}>
+                <Text style={styles.sectionTitle}>Important Tasks</Text>
+                <TouchableOpacity onPress={() => router.push('/(tabs)/tasks')}>
+                    <Text style={styles.seeAllText}>See All</Text>
+                </TouchableOpacity>
+           </View>
+
+
+           {todayActions
+               .filter(action => (!selectedCategory || action.category === selectedCategory || (action.smartTemplate && selectedCategory === 'Health' && action.smartTemplate.type === 'health_tracker')) &&
+                                 (!searchQuery || action.title.toLowerCase().includes(searchQuery.toLowerCase())))
+               .slice(0, 10)
+               .map((action, index) => (
+               <SmartActionCard
+                   key={action.id}
+                   action={action}
+                   index={index}
+                   onPress={() => {
+                        setSelectedAction(action);
+                        setOptionsModalVisible(true);
+                   }}
+               />
+           ))}
+        </View>
+
+        {/* Record Button (Floating-ish) */}
+        <View style={styles.section}>
+            <TouchableOpacity onPress={() => router.push('/(tabs)/record')}>
+                <LinearGradient
+                    colors={['#8E2DE2', '#4A00E0'] as any}
+                    style={styles.quickAction}
+                >
+                    <Text style={styles.quickActionIcon}>🎙️</Text>
+                    <Text style={styles.quickActionText}>Quick Record</Text>
+                </LinearGradient>
             </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Search Results Mode */}
-        {searchQuery.length > 0 ? (
-          <View style={styles.section}>
-             <View style={styles.searchResultsHeader}>
-               <Text style={styles.searchResultsTitle}>
-                  Found {allActions.filter(a => a.title.toLowerCase().includes(searchQuery.toLowerCase()) || (a.description && a.description.toLowerCase().includes(searchQuery.toLowerCase()))).length} result(s)
-               </Text>
-             </View>
-             
-             <View style={styles.actionItemsContainer}>
-                {allActions
-                  .filter(a => a.title.toLowerCase().includes(searchQuery.toLowerCase()) || (a.description && a.description.toLowerCase().includes(searchQuery.toLowerCase())))
-                  .map((action) => (
-                      <View key={action.id} style={styles.memoTaskCard}>
-                        {/* Task Header with Menu */}
-                        <View style={styles.memoTaskHeader}>
-                          <View style={styles.memoTaskBadges}>
-                            <View
-                              style={[
-                                styles.typeBadge,
-                                action.type === 'reminder' && { backgroundColor: '#FF9500' },
-                                action.type === 'calendar_event' && { backgroundColor: '#5AC8FA' },
-                                action.type === 'task' && { backgroundColor: '#007AFF' },
-                              ]}
-                            >
-                              <Text style={styles.typeBadgeText}>
-                                {action.type === 'reminder' && '⏰'}
-                                {action.type === 'calendar_event' && '📅'}
-                                {action.type === 'task' && '✅'}
-                              </Text>
-                            </View>
-                            <View
-                              style={[
-                                styles.priorityBadge,
-                                action.priority === 'high' && styles.memoPriorityHighBadge,
-                                action.priority === 'medium' && styles.memoPriorityMediumBadge,
-                                action.priority === 'low' && styles.memoPriorityLowBadge,
-                              ]}
-                            >
-                              <Text style={styles.priorityBadgeText}>
-                                {action.priority.toUpperCase()}
-                              </Text>
-                            </View>
-                          </View>
-                          <TaskMenu
-                              menuItems={[
-                                {
-                                  icon: '👥',
-                                  label: 'Add Member',
-                                  onPress: () => handleShareTask(action.id),
-                                  backgroundColor: '#E3F2FD'
-                                },
-                                // ... Reuse other menu items or keep simple
-                              ]}
-                            />
-                        </View>
-
-                        <Text style={styles.memoTaskTitle} numberOfLines={2}>
-                          {action.title}
-                        </Text>
-                        {action.description && (
-                          <Text style={styles.memoTaskTranscription} numberOfLines={2}>
-                            {action.description}
-                          </Text>
-                        )}
-                        <Text style={styles.memoTaskTime}>
-                              {action.dueDate ? formatRelativeTime(action.dueDate) : formatRelativeTime(action.createdAt)}
-                        </Text>
-                      </View>
-                  ))}
-             </View>
-          </View>
-        ) : (
-        /* Show regular content only if user has memos and NOT searching */
-        memos.length > 0 && (
-          <>
-        {/* Carousel: Progress & Today's Tasks & This Week */}
-        <View style={styles.section}>
-          <ScrollView
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            onScroll={(e) => {
-              const newIndex = Math.round(e.nativeEvent.contentOffset.x / (width - 32));
-              setCarouselIndex(newIndex);
-            }}
-            scrollEventThrottle={16}
-          >
-            <View style={{ width: width - 32 }}>
-              {renderCarouselCard(0)}
-            </View>
-            <View style={{ width: width - 32 }}>
-              {renderCarouselCard(1)}
-            </View>
-            <View style={{ width: width - 32 }}>
-              {renderCarouselCard(2)}
-            </View>
-          </ScrollView>
-          
-          {/* Carousel Indicators */}
-          <View style={styles.carouselIndicators}>
-            <View style={[styles.indicator, carouselIndex === 0 && styles.activeIndicator]} />
-            <View style={[styles.indicator, carouselIndex === 1 && styles.activeIndicator]} />
-            <View style={[styles.indicator, carouselIndex === 2 && styles.activeIndicator]} />
-          </View>
         </View>
-
-        {/* Pending Tasks Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>✅ Let's get this done</Text>
-            {allActions.filter(action => action.status === 'pending').length > 0 && (
-              <Text style={styles.taskCount}>
-                {allActions.filter(action => action.status === 'pending').length} task{allActions.filter(action => action.status === 'pending').length !== 1 ? 's' : ''}
-              </Text>
-            )}
-          </View>
-          
-          <View style={styles.urgencyCard}>
-            <Text style={styles.urgencyText}>{urgencyLevel}</Text>
-            
-            {/* Pending Tasks */}
-            {allActions.filter(action => action.status === 'pending').length > 0 ? (
-              <View style={styles.actionItemsContainer}>
-                {allActions
-                  .filter(action => action.status === 'pending')
-                  .sort((a, b) => {
-                    // Sort by priority: high > medium > low
-                    const priorityOrder: Record<string, number> = { high: 3, medium: 2, low: 1 };
-                    const aPriority = priorityOrder[a.priority] || 1;
-                    const bPriority = priorityOrder[b.priority] || 1;
-                    if (bPriority !== aPriority) return bPriority - aPriority;
-                    // Then by due date
-                    if (a.dueDate && b.dueDate) {
-                      return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
-                    }
-                    return 0;
-                  })
-                  .map((action) => {
-                    // Find the linked memo for this action
-                    const linkedMemo = memos.find(m => m.id === action.linkedMemoId);
-                    
-                    return (
-                      <View key={action.id} style={styles.memoTaskCard}>
-                        {/* Task Header with Menu */}
-                        <View style={styles.memoTaskHeader}>
-                          <View style={styles.memoTaskBadges}>
-                            <View
-                              style={[
-                                styles.typeBadge,
-                                action.type === 'reminder' && { backgroundColor: '#FF9500' },
-                                action.type === 'calendar_event' && { backgroundColor: '#5AC8FA' },
-                                action.type === 'task' && { backgroundColor: '#007AFF' },
-                              ]}
-                            >
-                              <Text style={styles.typeBadgeText}>
-                                {action.type === 'reminder' && '⏰'}
-                                {action.type === 'calendar_event' && '📅'}
-                                {action.type === 'task' && '✅'}
-                              </Text>
-                            </View>
-                            <View
-                              style={[
-                                styles.priorityBadge,
-                                action.priority === 'high' && styles.memoPriorityHighBadge,
-                                action.priority === 'medium' && styles.memoPriorityMediumBadge,
-                                action.priority === 'low' && styles.memoPriorityLowBadge,
-                              ]}
-                            >
-                              <Text style={styles.priorityBadgeText}>
-                                {action.priority.toUpperCase()}
-                              </Text>
-                            </View>
-                          </View>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                            <Text style={styles.memoTaskTime}>
-                              {action.dueDate ? formatRelativeTime(action.dueDate) : formatRelativeTime(action.createdAt)}
-                            </Text>
-                            {action.shared_with && action.shared_with.length > 0 && (
-                              <View style={{ flexDirection: 'row', marginLeft: 4 }}>
-                                {action.shared_with.slice(0, 3).map((member, idx) => (
-                                  <View 
-                                    key={idx} 
-                                    style={{
-                                      width: 20, 
-                                      height: 20, 
-                                      borderRadius: 10, 
-                                      backgroundColor: COLORS.primary, 
-                                      marginLeft: idx > 0 ? -8 : 0,
-                                      borderWidth: 1.5,
-                                      borderColor: COLORS.white,
-                                      alignItems: 'center',
-                                      justifyContent: 'center'
-                                    }}
-                                  >
-                                    <Text style={{ fontSize: 10, color: '#fff', fontWeight: 'bold' }}>
-                                      {member.name.charAt(0).toUpperCase()}
-                                    </Text>
-                                  </View>
-                                ))}
-                                {action.shared_with.length > 3 && (
-                                  <View style={{
-                                    width: 20, 
-                                    height: 20, 
-                                    borderRadius: 10, 
-                                    backgroundColor: COLORS.gray[400], 
-                                    marginLeft: -8,
-                                    borderWidth: 1.5,
-                                    borderColor: COLORS.white,
-                                    alignItems: 'center',
-                                    justifyContent: 'center'
-                                  }}>
-                                    <Text style={{ fontSize: 8, color: '#fff', fontWeight: 'bold' }}>+{action.shared_with.length - 3}</Text>
-                                  </View>
-                                )}
-                              </View>
-                            )}
-                            <TaskMenu
-                              menuItems={[
-                                {
-                                  icon: '👥',
-                                  label: 'Add Member',
-                                  onPress: () => handleShareTask(action.id),
-                                  backgroundColor: '#E3F2FD'
-                                },
-                                {
-                                  icon: <Lightbulb size={20} color={COLORS.white} />,
-                                  label: 'Insight',
-                                  backgroundColor: COLORS.primary,
-                                  onPress: () => {
-                                    // If has linked memo, show memo context
-                                    if (action.linkedMemoId) {
-                                      router.push({
-                                        pathname: '/(tabs)/chat',
-                                        params: { 
-                                          memoId: action.linkedMemoId,
-                                          mode: 'memo-insight'
-                                        }
-                                      });
-                                    } else {
-                                      // Otherwise, show task context
-                                      router.push({
-                                        pathname: '/(tabs)/chat',
-                                        params: { 
-                                          taskId: action.id,
-                                          taskTitle: action.title,
-                                          taskDescription: action.description || '',
-                                          mode: 'task-insight'
-                                        }
-                                      });
-                                    }
-                                  },
-                                },
-                                {
-                                  icon: <Bookmark size={20} color={COLORS.white} />,
-                                  label: 'Save for Later',
-                                  backgroundColor: '#34C759',
-                                  onPress: async () => {
-                                    // Mark action as completed (saved for later)
-                                    await AgentService.completeAction(action.id, user?.id || '');
-                                    await loadData();
-                                    Alert.alert('Saved!', `"${action.title}" saved for later.`);
-                                  },
-                                },
-                                {
-                                  icon: <Trash2 size={20} color={COLORS.white} />,
-                                  label: 'Delete',
-                                  backgroundColor: '#FF3B30',
-                                  destructive: true,
-                                  onPress: async () => {
-                                    Alert.alert(
-                                      'Delete Task',
-                                      `Are you sure you want to delete "${action.title}"?`,
-                                      [
-                                        { text: 'Cancel', style: 'cancel' },
-                                        {
-                                          text: 'Delete',
-                                          style: 'destructive',
-                                          onPress: async () => {
-                                            await AgentService.deleteAction(action.id, user?.id || '');
-                                            await loadData();
-                                          },
-                                        },
-                                      ]
-                                    );
-                                  },
-                                },
-                              ]}
-                            />
-                          </View>
-                        </View>
-
-                        {/* Task Title & Description */}
-                        <Text style={styles.memoTaskTitle} numberOfLines={2}>
-                          {action.title}
-                        </Text>
-                        {action.description && (
-                          <Text style={styles.memoTaskTranscription} numberOfLines={2}>
-                            {action.description}
-                          </Text>
-                        )}
-
-                        {/* Due Date/Time Indicator */}
-                        {action.dueDate && (
-                          <View style={styles.actionIndicator}>
-                            <Text style={styles.actionIndicatorText}>
-                              📅 Due: {new Date(action.dueDate).toLocaleDateString()}
-                              {action.dueTime && ` at ${action.dueTime}`}
-                            </Text>
-                          </View>
-                        )}
-                      </View>
-                    );
-                  })}
-              </View>
-            ) : (
-              <Text style={styles.emptyActionText}>No pending tasks. Great job! 🎉</Text>
-            )}
-          </View>
-        </View>
-
-        {/* Record Button */}
-        <View style={styles.section}>
-          <TouchableOpacity
-            onPress={() => router.push('/(tabs)/record')}
-          >
-            <LinearGradient
-              colors={GRADIENTS.primary as any}
-              style={styles.quickAction}
-            >
-              <Text style={styles.quickActionIcon}>🎙️</Text>
-              <Text style={styles.quickActionText}>Start Recording</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
-
-        {/* Import Conversations */}
-        <View style={styles.section}>
-          <TouchableOpacity
-            onPress={() => {
-              Alert.alert(
-                'Import Conversations',
-                'Import text files or conversations to analyze with AI',
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                  { 
-                    text: 'Paste from Clipboard', 
-                    onPress: async () => {
-                      const hasString = await Clipboard.hasStringAsync();
-                      if (hasString) {
-                        const content = await Clipboard.getStringAsync();
-                        processImportedText(content, 'Clipboard content');
-                      } else {
-                        Alert.alert('Clipboard Empty', 'No text found in clipboard');
-                      }
-                    }
-                  },
-                  { 
-                    text: 'Choose File', 
-                    onPress: async () => {
-                      try {
-                        const result = await DocumentPicker.getDocumentAsync({
-                          type: ['text/plain', 'application/pdf'],
-                          copyToCacheDirectory: true
-                        });
-                        
-                        if (!result.canceled && result.assets && result.assets.length > 0) {
-                          const file = result.assets[0];
-                          if (file.mimeType === 'text/plain') {
-                             const content = await FileSystem.readAsStringAsync(file.uri);
-                             processImportedText(content, file.name);
-                          } else {
-                            Alert.alert('Unsupported File', 'Currently only .txt files are supported for direct import.');
-                          }
-                        }
-                      } catch (err) {
-                        console.error('Import error:', err);
-                        Alert.alert('Error', 'Failed to read file');
-                      }
-                    }
-                  }
-                ]
-              );
-            }}
-          >
-            <LinearGradient
-              colors={['#6366F1', '#8B5CF6'] as any}
-              style={styles.quickAction}
-            >
-              <Text style={styles.quickActionIcon}>📁</Text>
-              <Text style={styles.quickActionText}>Import Conversations</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
-
-        {/* Try These Examples */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>💡 Try these examples</Text>
-          <TouchableOpacity
-            style={styles.exampleCard}
-            onPress={() => router.push('/(tabs)/record')}
-          >
-            <Text style={styles.exampleIcon}>🎤</Text>
-            <View style={styles.exampleContent}>
-              <Text style={styles.exampleTitle}>Quick Voice Note</Text>
-              <Text style={styles.exampleDescription}>
-                "Remind me to call the client tomorrow at 2 PM"
-              </Text>
-            </View>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.exampleCard}
-            onPress={() => router.push('/(tabs)/chat')}
-          >
-            <Text style={styles.exampleIcon}>💬</Text>
-            <View style={styles.exampleContent}>
-              <Text style={styles.exampleTitle}>AI Planning</Text>
-              <Text style={styles.exampleDescription}>
-                "Help me plan my presentation for next week"
-              </Text>
-            </View>
-          </TouchableOpacity>
-        </View>
-        </>
-        )
-      )}
       </ScrollView>
       <MemberSelectionModal
         visible={memberModalVisible}
         onClose={() => setMemberModalVisible(false)}
         onSelectMember={handleMemberSelected}
         title="Share Task"
+      />
+      <TaskOptionsModal
+        visible={optionsModalVisible}
+        onClose={() => setOptionsModalVisible(false)}
+        action={selectedAction}
+        onAddMember={(actionId) => {
+            // Logic to open MemberSelectionModal
+            // We need to fetch the action first? Or just pass ID?
+            // Existing Logic: handleShareTask(action.id) opens modal
+            // But handleShareTask expects actionId string.
+            handleShareTask(actionId);
+        }}
+        onMarkDone={async (actionId) => {
+            if (user?.id) {
+                // Optimistic Update
+                setTodayActions(prev => prev.filter(a => a.id !== actionId));
+                
+                await AgentService.completeAction(actionId, user.id);
+                // Alert.alert('Task Done', 'Great job! 🎉'); // Optional: Remove alert for smoother flow? Or keep it. 
+                // User might prefer instant removal without popup. Let's keep a Toast or simple Log.
+                // Keeping Alert for positive reinforcement but maybe less intrusive?
+                // For now, keep logic but ensure data reloads.
+                loadData(); 
+            }
+        }}
+      />
+      <NotificationModal
+        visible={notificationModalVisible}
+        onClose={() => {
+            setNotificationModalVisible(false);
+            loadData(); // Refresh badge count
+        }}
+        userId={user?.id || ''}
+      />
+      
+      {/* Smart Planning Modal - Jeetu asks questions */}
+      <SmartPlanningModal
+        visible={showSmartPlanningModal}
+        category={planningCategory}
+        onClose={() => {
+          setShowSmartPlanningModal(false);
+          setPlanningCategory('');
+        }}
+        onComplete={(answers) => {
+          setShowSmartPlanningModal(false);
+          setPlanningAnswers(answers);
+          
+          // Generate suggested tasks based on answers
+          let tasks: { title: string; icon: string }[] = [];
+          const categoryLower = planningCategory.toLowerCase();
+          
+          if (categoryLower === 'health') {
+            tasks = getHealthTasks(answers);
+          } else if (categoryLower === 'ideas') {
+            tasks = getIdeasTasks(answers);
+          } else if (categoryLower === 'daily') {
+            tasks = getDailyTasks(answers);
+          } else if (categoryLower === 'chores') {
+            tasks = getChoresTasks(answers);
+          } else {
+            // Default tasks for other categories
+            tasks = [
+              { title: `Start ${planningCategory} planning`, icon: '📝' },
+              { title: 'Set goals', icon: '🎯' },
+              { title: 'Create timeline', icon: '📅' },
+            ];
+          }
+          
+          setSuggestedTasks(tasks);
+          setShowTaskBuilder(true);
+        }}
+      />
+      
+      {/* Illustrative Task Builder - Visual task selection */}
+      <IllustrativeTaskBuilder
+        visible={showTaskBuilder}
+        category={planningCategory}
+        categoryColor={getCategoryQuestions(planningCategory)?.color || '#8B5CF6'}
+        suggestedTasks={suggestedTasks}
+        answers={planningAnswers}
+        onClose={() => {
+          setShowTaskBuilder(false);
+          setPlanningCategory('');
+          setSuggestedTasks([]);
+        }}
+        onSave={async (tasks, trackerData) => {
+          setShowTaskBuilder(false);
+          
+          if (!user?.id) return;
+          
+          try {
+            // Create actual tasks from selected items
+            for (const task of tasks) {
+              await AgentService.createAction({
+                id: `action-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                userId: user.id,
+                type: 'task',
+                title: task.title,
+                description: `Created from ${planningCategory} planning`,
+                category: planningCategory as MemoCategory,
+                priority: 'medium',
+                status: 'pending',
+                dueDate: new Date().toISOString(),
+                createdFrom: 'smart_planning',
+                createdAt: new Date().toISOString(),
+              } as AgentAction, user.id);
+            }
+            
+            // Save tracker data as a special action
+            if (trackerData.waterGlasses > 0 || trackerData.mood || trackerData.sleepHours) {
+              await AgentService.createAction({
+                id: `tracker-${Date.now()}`,
+                userId: user.id,
+                type: 'task',
+                title: `${planningCategory} Tracking - ${new Date().toLocaleDateString()}`,
+                description: `Water: ${trackerData.waterGlasses}/8, Sleep: ${trackerData.sleepHours || 'N/A'}, Mood: ${trackerData.mood || 'N/A'}, Productivity: ${trackerData.productivity}/5`,
+                category: planningCategory as MemoCategory,
+                priority: 'low',
+                status: 'completed',
+                createdFrom: 'smart_planning',
+                createdAt: new Date().toISOString(),
+              } as AgentAction, user.id);
+            }
+            
+            Alert.alert(
+              '✨ Plan Created!',
+              `Added ${tasks.length} tasks to your ${planningCategory} plan.`,
+              [{ text: 'Great!', style: 'default' }]
+            );
+            
+            loadData(); // Refresh task list
+          } catch (error) {
+            console.error('Error saving plan:', error);
+            Alert.alert('Error', 'Failed to save your plan. Please try again.');
+          }
+          
+          setPlanningCategory('');
+          setSuggestedTasks([]);
+        }}
       />
     </SafeAreaView>
   );
@@ -1283,14 +961,15 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.gray[50],
   },
   header: {
-    padding: 24,
-    paddingTop: 16,
-    paddingBottom: 20, // Reduced from 32
+    paddingHorizontal: 24,
+    paddingTop: 0, // Moved up to maximum (SafeAreaView handles status bar)
+    paddingBottom: 16,
   },
   headerContent: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
+    marginTop: 8, // slight adjustment for alignment
   },
   headerLeft: {
     flex: 1,
@@ -1304,14 +983,13 @@ const styles = StyleSheet.create({
   headerIconButton: {
     width: 40,
     height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
-    position: 'relative',
+    // Removed background and shadow as requested
   },
   headerIcon: {
     fontSize: 22,
+    color: COLORS.textPrimary,
   },
   badge: {
     position: 'absolute',
@@ -1325,7 +1003,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 6,
     borderWidth: 2,
-    borderColor: '#fff',
+    borderColor: COLORS.white,
   },
   badgeInactive: {
     backgroundColor: '#8E8E93',
@@ -1343,8 +1021,8 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 16,
-    color: COLORS.white,
-    opacity: 0.9,
+    color: COLORS.textSecondary,
+    opacity: 1,
   },
   calendarBannerSection: {
     paddingHorizontal: 16,
@@ -1547,31 +1225,6 @@ const styles = StyleSheet.create({
   },
   quickActionIcon: {
     fontSize: 24,
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.white,
-    marginHorizontal: 16,
-    marginTop: -20, // Overlap nicely with header
-    marginBottom: 16,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    height: 48,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  searchIcon: {
-    marginRight: 10,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 16,
-    color: COLORS.dark,
-    height: '100%',
   },
   clearButton: {
     padding: 4,
@@ -2078,9 +1731,77 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginTop: 12,
   },
+  // New Styles for Gradient Layout
+  categoryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 8,
+    marginBottom: 16,
+  },
+  categoryItem: {
+    alignItems: 'center',
+    width: (width - 64) / 4,
+  },
+  categoryCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    elevation: 4,
+  },
+  categoryLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.gray[800],
+    textAlign: 'center',
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    backgroundColor: '#FF3B30',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFF',
+  },
   completionBadgeText: {
     fontSize: 13,
     color: '#0F5132',
     fontWeight: '600',
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.white,
+    marginHorizontal: 20,
+    marginTop: 16,
+    marginBottom: 8,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 48,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 16,
+    color: COLORS.dark,
+    height: '100%',
   },
 });

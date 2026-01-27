@@ -20,8 +20,17 @@ create table if not exists public.group_planning_messages (
   role text not null check (role in ('user', 'assistant')),
   content text,
   audio_uri text,
+  image_uri text,
   timestamp timestamp with time zone default timezone('utc'::text, now()) not null
 );
+
+-- 1b. Safely add image_uri if missing (for existing tables)
+do $$
+begin
+  if not exists (select 1 from information_schema.columns where table_name = 'group_planning_messages' and column_name = 'image_uri') then
+    alter table public.group_planning_messages add column image_uri text;
+  end if;
+end $$;
 
 -- 2. Add to publication safely (ignore if already added)
 do $$

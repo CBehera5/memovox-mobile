@@ -206,19 +206,26 @@ class AuthService {
         return await StorageService.getUser();
       }
 
+      // Fetch profile to get stored phone number
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('phone_number')
+        .eq('id', data.user.id)
+        .single();
+
       const user: User = {
         id: data.user.id,
         email: data.user.email || '',
         name: data.user.user_metadata?.full_name || 'User',
         createdAt: data.user.created_at || new Date().toISOString(),
-        phoneNumber: data.user.phone,
-        phoneVerified: !!data.user.phone_confirmed_at,
+        phoneNumber: profile?.phone_number || data.user.phone, // Prioritize profile phone
+        phoneVerified: !!data.user.phone_confirmed_at || !!profile?.phone_number, // Assume verified if manually added to profile
       };
       
       // Update local storage
       await StorageService.setUser(user);
       
-      console.log('✅ Current user:', user.email);
+      console.log('✅ Current user:', user.email, 'Phone:', user.phoneNumber);
       return user;
     } catch (error) {
       console.error('Error getting current user:', error);

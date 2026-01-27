@@ -318,6 +318,93 @@ class PersonalCompanionService {
   setUserPreferences(preferences: any): void {
     this.userPreferences = { ...this.userPreferences, ...preferences };
   }
+
+  /**
+   * Refresh and Save Deep Persona
+   */
+  /**
+   * Get formatted persona for AI context
+   */
+  async getPersonaContext(userId: string): Promise<string> {
+    try {
+        const { supabase } = await import('../config/supabase');
+        // Check cache first (this.userPreferences) or fetch DB
+        // For now, fetch FRESH from DB to be safe
+        const { data } = await supabase.from('user_personas').select('*').eq('user_id', userId).single();
+        
+        if (!data) return '';
+
+        let context = `\nUSER PERSONA (Adapt your style to this):\n`;
+        if (data.bio) context += `- Bio: ${data.bio}\n`;
+        if (data.communication_style) context += `- Style: ${data.communication_style}\n`;
+        if (data.traits && Array.isArray(data.traits)) context += `- Traits: ${data.traits.join(', ')}\n`;
+        if (data.goals && Array.isArray(data.goals)) context += `- Goals: ${data.goals.join(', ')}\n`;
+        
+        return context;
+    } catch (e) {
+        return '';
+    }
+  }
+
+  /**
+   * Refresh and Save Deep Persona
+   */
+  async refreshUserPersona(userId: string): Promise<void> {
+    try {
+      const { supabase } = await import('../config/supabase');
+
+      // 0. Check if update is needed (Throttling: 24 hours)
+      const { data: currentPersona } = await supabase
+        .from('user_personas')
+        .select('last_updated')
+        .eq('user_id', userId)
+        .single();
+
+      if (currentPersona?.last_updated) {
+        const lastUpdate = new Date(currentPersona.last_updated);
+        const hoursDiff = (new Date().getTime() - lastUpdate.getTime()) / (1000 * 3600);
+        if (hoursDiff < 24) {
+             console.log('Skipping Persona Refresh (Recent update)');
+             return; 
+        }
+      }
+
+      // 1. Fetch recent memos
+      const { data: memos } = await supabase
+        .from('voice_memos')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (!memos || memos.length < 5) return; // Need at least 5 memos
+
+      // 2. Generate Deep Persona
+      const deepPersona = await AIService.generateDeepPersona(memos as any[]);
+      
+      if (deepPersona) {
+         // 3. Save to DB
+         const { error } = await supabase
+            .from('user_personas')
+            .upsert({
+                user_id: userId,
+                bio: deepPersona.bio,
+                traits: deepPersona.traits,
+                goals: deepPersona.goals,
+                communication_style: deepPersona.communication_style,
+                interests: deepPersona.interests,
+                last_updated: new Date().toISOString()
+            });
+            
+         if (!error) {
+            console.log('✅ AI Persona Updated');
+            this.userPreferences.communicationStyle = deepPersona.communication_style;
+         }
+      }
+    } catch (error) {
+      console.error('Error refreshing persona:', error);
+    }
+  }
 }
 
 export default new PersonalCompanionService();

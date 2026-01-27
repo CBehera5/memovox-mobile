@@ -250,7 +250,7 @@ class NotificationService {
     userId: string;
     title: string;
     message: string;
-    type: 'system' | 'reminder' | 'insight' | 'followup';
+    type: 'system' | 'reminder' | 'insight' | 'followup' | 'assignment' | 'group_invite';
     data?: any;
   }): Promise<void> {
     try {
@@ -630,6 +630,48 @@ class NotificationService {
       }
     } catch (error) {
       console.error('Error in markNotificationsAsRead:', error);
+    }
+  }
+
+  /**
+   * Get all notifications for a user
+   */
+  async getNotifications(userId: string, limit = 20): Promise<any[]> {
+    try {
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) {
+        console.error('Error fetching notifications:', error);
+        return [];
+      }
+
+      return data || [];
+    } catch (error) {
+      console.error('Error in getNotifications:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Mark a single notification as read
+   */
+  async markAsRead(notificationId: string): Promise<void> {
+    try {
+      const { error } = await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('id', notificationId);
+
+      if (error) {
+        console.error('Error marking notification as read:', error);
+      }
+    } catch (error) {
+      console.error('Error in markAsRead:', error);
     }
   }
 }

@@ -209,6 +209,33 @@ class AIService {
     return this.mockTranscribeAndAnalyze();
   }
 
+  async analyzeImage(imageUri: string, prompt: string = 'Describe this image'): Promise<string> {
+    logger.info('Analyzing image', { provider: this.config.provider });
+
+    if (this.groqClient && this.config.provider === 'groq') {
+      try {
+        const response = await this.groqClient.chat.completions.create({
+          model: AI_MODELS.groq.vision,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: prompt },
+                { type: 'image_url', image_url: { url: imageUri } },
+              ],
+            },
+          ],
+        });
+        return response.choices[0]?.message?.content || 'No description available.';
+      } catch (error) {
+        logger.error('Groq Vision API error:', error);
+        return 'Failed to analyze image.';
+      }
+    }
+    
+    return 'Image analysis not available for this provider.';
+  }
+
   private async callGroqAPI(transcription: string, context?: AnalysisContext): Promise<TranscriptionResult> {
     try {
       const prompt = this.buildAnalysisPrompt(transcription, context);
@@ -450,6 +477,57 @@ CRITICAL: Return ONLY valid JSON, no additional text. NO invented details.`;
     }
 
     return insights;
+  }
+
+  async generateDeepPersona(memos: VoiceMemo[]): Promise<any> {
+    logger.info('Generating Deep AI Persona', { count: memos.length });
+    
+    if (!this.groqClient || this.config.provider !== 'groq') {
+       logger.warn('Deep Persona requires Groq');
+       return null;
+    }
+
+    if (memos.length < 3) {
+        return null; // Not enough data
+    }
+
+    // Prepare context from last 20 memos
+    const recentMemos = memos.slice(0, 20).map(m => 
+        `- [${m.category}] ${m.transcription.substring(0, 200)}`
+    ).join('\n');
+
+    const prompt = `
+    Analyze these voice memos to build a comprehensive User Persona.
+    
+    Memos:
+    ${recentMemos}
+    
+    Construct a psychological profile of the user based ONLY on this data.
+    Infer their goals, habits, and communication style.
+    
+    Return VALID JSON:
+    {
+      "bio": "A short narrative description of who this user is (e.g., A busy product manager creating a startup...)",
+      "traits": ["trait1", "trait2", "trait3"],
+      "goals": ["goal1", "goal2"],
+      "communication_style": "formal/casual, descriptive/concise, etc.",
+      "interests": ["topic1", "topic2"]
+    }
+    `;
+
+    try {
+        const response = await this.groqClient.chat.completions.create({
+            model: 'llama-3.3-70b-versatile',
+            messages: [{ role: 'user', content: prompt }],
+            response_format: { type: 'json_object' }
+        });
+        
+        const content = response.choices[0]?.message?.content || '{}';
+        return JSON.parse(content);
+    } catch (error) {
+        logger.error('Error generating deep persona:', error);
+        return null;
+    }
   }
 }
 

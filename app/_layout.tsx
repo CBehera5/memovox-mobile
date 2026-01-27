@@ -10,6 +10,7 @@ import AIService from '../src/services/AIService';
 import NotificationService from '../src/services/NotificationService';
 import AuthService from '../src/services/AuthService';
 import { supabase } from '../src/config/supabase';
+import ErrorBoundary from '../src/components/ErrorBoundary';
 
 export default function RootLayout() {
   const router = useRouter();
@@ -117,7 +118,7 @@ export default function RootLayout() {
   }
 
   return (
-    <>
+    <ErrorBoundary>
       <StatusBar style="auto" />
       <Stack
         screenOptions={{
@@ -131,6 +132,6 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="index" options={{ headerShown: false }} />
       </Stack>
-    </>
+    </ErrorBoundary>
   );
 }

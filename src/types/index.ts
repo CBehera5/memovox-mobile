@@ -81,7 +81,7 @@ export interface Notification {
   id: string;
   userId: string;
   memoId: string;
-  type: 'reminder' | 'followup' | 'insight' | 'system';
+  type: 'reminder' | 'followup' | 'insight' | 'system' | 'assignment' | 'group_invite';
   title: string;
   body: string;
   scheduledFor: string;
@@ -130,6 +130,7 @@ export interface AgentAction {
   type: 'reminder' | 'calendar_event' | 'task';
   title: string;
   description?: string;
+  transcription?: string; // Original voice transcription for context
   dueDate?: string;
   dueTime?: string;
   priority: 'low' | 'medium' | 'high';
@@ -138,6 +139,8 @@ export interface AgentAction {
   createdAt: string;
   completedAt?: string;
   linkedMemoId?: string;
+  sessionId?: string; // Chat session that created this task (for viewing chat history)
+  category?: MemoCategory; // Added for filtering (e.g., 'Health', 'Work')
   // Enhanced features
   recurring?: {
     enabled: boolean;
@@ -149,6 +152,26 @@ export interface AgentAction {
   notificationSound?: string;
   snoozeCount?: number;
   shared_with?: { user_id: string; name: string; shared_at: string }[];
+  assignedToId?: string;
+  assignedToName?: string;
+  smartTemplate?: SmartTemplateData;
+}
+
+export type SmartTemplateType = 'health_tracker' | 'meeting_countdown' | 'shopping_list' | 'checklist' | 'standard';
+
+export interface SmartTemplateData {
+  type: SmartTemplateType;
+  // For Health Tracker (e.g. Steps, Water, Gym)
+  targetValue?: number;
+  currentValue?: number;
+  unit?: string;
+  metaLabel?: string; // e.g., "1200/8000 steps"
+  // For Meeting
+  meetingTime?: string;
+  attendees?: string[];
+  platform?: 'zoom' | 'meet' | 'teams' | 'in_person';
+  // For Shopping/Checklist
+  items?: { text: string; checked: boolean }[];
 }
 
 export interface AgentSuggestion {

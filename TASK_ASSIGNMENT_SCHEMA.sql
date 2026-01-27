@@ -24,7 +24,9 @@ create table if not exists public.agent_actions (
   "completedAt" text,
   "linkedMemoId" text,
   data jsonb,
-  shared_with jsonb default '[]'::jsonb
+  shared_with jsonb default '[]'::jsonb,
+  "assigned_to_id" text,
+  "assigned_to_name" text
 );
 
 -- 1c. Add shared_with column to agent_actions if not exists (redundant but safe)

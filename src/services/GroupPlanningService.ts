@@ -14,6 +14,7 @@ interface ChatMessage {
   content: string;
   timestamp: string;
   audioUri?: string;
+  imageUri?: string;
 }
 
 export interface GroupPlanningSession {
@@ -39,6 +40,7 @@ export interface GroupPlanningMessage extends ChatMessage {
   session_id: string;
   user_id: string;
   user_name: string;
+  image_uri?: string; // Mapped from imageUri
 }
 
 class GroupPlanningServiceClass {
@@ -156,6 +158,7 @@ class GroupPlanningServiceClass {
         session_id: sessionId,
         user_id: userId,
         user_name: userName,
+        image_uri: message.imageUri, // Map camelCase to snake_case for DB
       };
 
       const { data, error } = await supabase

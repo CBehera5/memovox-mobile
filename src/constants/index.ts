@@ -127,6 +127,10 @@ export const AI_MODELS = {
     default: 'gpt-4-turbo-preview',
     fast: 'gpt-3.5-turbo',
   },
+  groq: {
+    default: 'llama-3.3-70b-versatile',
+    vision: 'llama-3.2-11b-vision-preview',
+  },
 };
 
 export const MAX_RECORDING_DURATION = 600; // 10 minutes in seconds

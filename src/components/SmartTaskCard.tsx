@@ -1,6 +1,7 @@
 // src/components/SmartTaskCard.tsx
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../constants';
 import { AgentAction } from '../types';
 
@@ -108,14 +109,29 @@ export default function SmartTaskCard({
 
       <View style={styles.footer}>
         <View style={styles.dateSection}>
-          {formatDueDate() && (
-            <View style={[styles.dateContainer, isOverdue() && styles.overdueDate]}>
-              <Text style={styles.dateLabel}>Due:</Text>
-              <Text style={[styles.dateText, isOverdue() && styles.overdueDateText]}>
-                {formatDueDate()}
-              </Text>
-            </View>
+          <View style={styles.infoRow}>
+            <Ionicons name="calendar-outline" size={14} color={isOverdue() ? '#EF5350' : COLORS.gray[600]} />
+            <Text style={[styles.dateText, isOverdue() && styles.overdueDateText]}>
+              {formatDueDate() || 'No Date'}
+            </Text>
+          </View>
+          
+          {action.dueTime && (
+             <View style={styles.infoRow}>
+                 <Ionicons name="time-outline" size={14} color={COLORS.gray[600]} />
+                 <Text style={styles.dateText}>{action.dueTime}</Text>
+             </View>
           )}
+
+          {action.shared_with && action.shared_with.length > 0 && (
+              <View style={styles.sharedRow}>
+                   <Ionicons name="people" size={14} color={COLORS.primary} />
+                   <Text style={styles.sharedText}>
+                       Shared with {action.shared_with.length} {action.shared_with.length === 1 ? 'person' : 'people'}
+                   </Text>
+              </View>
+          )}
+
           {daysOld && daysOld > 3 && (
             <View style={styles.oldBadge}>
               <Text style={styles.oldBadgeText}>⚠️ {daysOld} days old</Text>
@@ -152,6 +168,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     borderRadius: 12,
     padding: 16,
+    marginHorizontal: 12, // Reduce width slightly for better UX
     marginBottom: 12,
     borderWidth: 1,
     borderColor: COLORS.gray[200],
@@ -160,6 +177,28 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 2,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 2,
+  },
+  sharedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
+    backgroundColor: '#F0F7FF',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    alignSelf: 'flex-start',
+  },
+  sharedText: {
+    fontSize: 11,
+    color: COLORS.primary,
+    fontWeight: '600',
   },
   overdueContainer: {
     borderLeftWidth: 4,
